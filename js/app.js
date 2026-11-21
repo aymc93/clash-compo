@@ -12,7 +12,12 @@ import { CompsView } from './comps.js';
 
 function useSnapshot(store) {
   const [snap, setSnap] = useState(store.getSnapshot());
-  useEffect(() => store.subscribe(setSnap), [store]);
+  useEffect(() => {
+    const unsubscribe = store.subscribe(setSnap);
+    // Un événement a pu arriver entre le premier rendu et l'abonnement : on se resynchronise.
+    setSnap(store.getSnapshot());
+    return unsubscribe;
+  }, [store]);
   return snap;
 }
 
