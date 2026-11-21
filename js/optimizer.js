@@ -58,12 +58,20 @@ export function rating(score, weight) {
 
 /**
  * @param players  joueurs actifs : [{ id, name, color, pool: { champId: { role: tier } }, forcedRole }]
- * @param opts     { unavailable: Set<champId>, locks: [{ champ, player|null }], weight, limit }
+ * @param opts     { unavailable: Set<champId>, locks: [{ champ, player|null }], weight, limit, matchup }
+ *   matchup(champId, role) → { points, wr, wrS, games, vs } | null : bonus/malus contre le pick adverse du rôle
  * @returns { players, cands, comps, reason, truncated }
  *   comps : meilleure compo pour chaque répartition des rôles, triées par score.
  */
 export function solve(players, opts = {}) {
-  const { unavailable = new Set(), locks = [], weight = 1, limit = 8 } = opts;
+  const { unavailable = new Set(), locks = [], weight = 1, limit = 8, matchup = null } = opts;
+  const muCache = new Map();
+  const mu = (id, role) => {
+    if (!matchup) return null;
+    const k = id + '|' + role;
+    if (!muCache.has(k)) muCache.set(k, matchup(id, role));
+    return muCache.get(k);
+  };
   const out = { players, cands: ROLES.map(() => []), comps: [], reason: null, truncated: false };
   if (players.length < 5) {
     out.reason = { type: 'players', count: players.length };
@@ -97,7 +105,8 @@ export function solve(players, opts = {}) {
         const tier = roles[r];
         if (!TIER_VALUE[tier]) return;
         if (forced && forced !== r) return;
-        cands[ri].push({ pi, champ: id, ri, tier, value: TIER_VALUE[tier], meta, off: false });
+        const m = mu(id, r);
+        cands[ri].push({ pi, champ: id, ri, tier, base: TIER_VALUE[tier], value: TIER_VALUE[tier] + (m?.points || 0), mu: m, meta, off: false });
       });
     }
   });
@@ -113,7 +122,8 @@ export function solve(players, opts = {}) {
       for (const r of roles) {
         if (forced && forced !== r) continue;
         const ri = ROLES.indexOf(r);
-        cands[ri].push({ pi, champ: id, ri, tier: 0, value: OFFPOOL_VALUE, meta, off: true });
+        const m = mu(id, r);
+        cands[ri].push({ pi, champ: id, ri, tier: 0, base: OFFPOOL_VALUE, value: OFFPOOL_VALUE + (m?.points || 0), mu: m, meta, off: true });
       }
     }
   }
@@ -187,14 +197,17 @@ export function solve(players, opts = {}) {
 
   out.comps = top.map((t) => {
     const used = new Set(t.picks.map((p) => p.pi));
+    const comfort = t.picks.reduce((s, p) => s + p.base, 0);
     return {
       key: t.key,
       score: t.score,
-      comfort: t.comfort,
+      comfort,
+      matchup: t.comfort - comfort,
+      hasMatchups: t.picks.some((p) => p.mu),
       balance: balanceOf(t.picks.map((p) => p.meta)),
       slots: t.picks.map((p) => ({
         role: ROLES[p.ri], ri: p.ri, pi: p.pi, player: players[p.pi],
-        champ: p.champ, tier: p.tier, value: p.value, off: p.off,
+        champ: p.champ, tier: p.tier, value: p.value, off: p.off, mu: p.mu,
       })),
       bench: players.filter((_, i) => !used.has(i)),
     };
@@ -247,7 +260,7 @@ export function pickPriority(players, opts, result) {
  * Évalue une compo enregistrée avec les pools et la draft actuels.
  * `players` = joueurs titulaires (actifs).
  */
-export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, weight = 1 }) {
+export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, weight = 1, matchup = null }) {
   const reasons = [];
   const metas = [];
   let comfort = 0;
@@ -264,7 +277,7 @@ export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, 
     const p = players.find((x) => x.id === slot.player);
     if (!p) reasons.push(`${slot.name || 'Un joueur'} n’est pas titulaire`);
     const tier = p?.pool?.[slot.champ]?.[role];
-    comfort += TIER_VALUE[tier] || OFFPOOL_VALUE;
+    comfort += (TIER_VALUE[tier] || OFFPOOL_VALUE) + (matchup?.(slot.champ, role)?.points || 0);
   }
   for (const l of locks) {
     if (!champsIn.has(l.champ)) reasons.push(`Incompatible avec notre pick ${champ(l.champ).name}`);

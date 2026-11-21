@@ -1,18 +1,20 @@
 // Résultats : compo recommandée, alternatives, priorités de pick, compos enregistrées.
 import { html } from './vendor.js';
 import { cx, signed } from './util.js';
-import { ROLES, ROLE_LABEL, TIER_LETTER, champ, loadingUrl, splashUrl } from './data.js';
+import { ROLES, ROLE_LABEL, TIER_LETTER, champ, iconUrl, loadingUrl, splashUrl } from './data.js';
+import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
 import { ChampIcon, ConfirmButton, EditableText, Icon, RoleIcon, TierPill } from './ui.js';
 
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
 
-export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount }) {
+export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw }) {
   const comps = result.comps;
+  const matchups = html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`;
   if (!comps.length) {
     return html`<div class="comps-layout">
       <${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} />
-      <aside class="comps-side"><${SavedPanel} saved=${saved} actions=${actions} /></aside>
+      <aside class="comps-side">${matchups}<${SavedPanel} saved=${saved} actions=${actions} /></aside>
     </div>`;
   }
   const current = comps[Math.min(selected, comps.length - 1)];
@@ -33,6 +35,7 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
       ${result.truncated && html`<p class="hint">Beaucoup de possibilités : recherche limitée, les résultats sont très bons mais peut-être pas parfaits.</p>`}
     </div>
     <aside class="comps-side">
+      ${matchups}
       <${PriorityPanel} items=${priority} weight=${weight} />
       <${SavedPanel} saved=${saved} actions=${actions} />
     </aside>
@@ -84,6 +87,7 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions }) {
         <div class="score-break">
           <span>Confort <b>${comp.comfort}</b>/${MAX_COMFORT}</span>
           <span>Équilibre <b>${signed(bal.total * weight)}</b></span>
+          ${comp.hasMatchups && html`<span>Matchups <b>${signed(comp.matchup)}</b></span>`}
         </div>
       </div>
     </header>
@@ -117,6 +121,10 @@ function SlotCard({ slot, alts, locked, onToggleLock }) {
         </button>
       </div>
       <div class="sc-bottom">
+        ${slot.mu && html`<span class=${cx('sc-mu', wrClass(slot.mu.wr))}
+          title=${`${c.name} contre ${champ(slot.mu.vs).name} : ${pct(slot.mu.wr)} de victoires (${slot.mu.games.toLocaleString('fr-FR')} parties)`}>
+          <img src=${iconUrl(slot.mu.vs)} alt="" /> vs · ${pct(slot.mu.wr)}
+        </span>`}
         <${TierPill} tier=${slot.tier} off=${slot.off} />
         <h3 class="sc-name">${c.name}</h3>
         <span class="sc-player"><span class="dot"></span>${slot.player.name}</span>
@@ -125,7 +133,7 @@ function SlotCard({ slot, alts, locked, onToggleLock }) {
     <div class="sc-alts">
       ${alts.length
         ? alts.map((a) => html`<${ChampIcon} key=${a.champ} id=${a.champ} size=${28} tier=${a.tier}
-            title=${`Sinon : ${champ(a.champ).name} (${TIER_LETTER[a.tier]})`} />`)
+            title=${`Sinon : ${champ(a.champ).name} (${TIER_LETTER[a.tier]})${a.mu ? ` — ${pct(a.mu.wr)} contre ${champ(a.mu.vs).name}` : ''}`} />`)
         : html`<span class="muted tiny">Pas d’autre choix</span>`}
     </div>
   </div>`;
@@ -165,6 +173,52 @@ function CompMini({ comp, rank, active, best, weight, onClick }) {
       </div>`)}
     </div>
   </button>`;
+}
+
+/** Pour chaque pick adverse : nos champions (pools des titulaires) classés par winrate contre lui. */
+function MatchupPanel({ enemies, players, unavailable, muRaw }) {
+  const list = enemies.filter((e) => e?.role);
+  if (!list.length) return null;
+  return html`<section class="panel side-panel">
+    <div class="panel-head"><h3><${Icon} name="swords" size=${16} /> Matchups adverses</h3></div>
+    <p class="muted small">Notre winrate contre chaque pick adverse, dans sa lane, avec les champions de nos pools.</p>
+    ${list.map((e) => {
+      const wr = e.stats.status === 'ok' ? roleWinrate(e.stats.data, e.role) : null;
+      const rows = [];
+      if (e.stats.status === 'ok') {
+        const seen = new Map();
+        for (const p of players) {
+          for (const [id, roles] of Object.entries(p.pool || {})) {
+            if (!roles?.[e.role] || unavailable?.has(id)) continue;
+            const m = muRaw(id, e.role);
+            if (!seen.has(id)) seen.set(id, { id, m, players: [] });
+            seen.get(id).players.push(`${p.name} (${TIER_LETTER[roles[e.role]]})`);
+          }
+        }
+        rows.push(...[...seen.values()].sort((a, b) => (b.m?.wrS ?? 0.5) - (a.m?.wrS ?? 0.5)).slice(0, 6));
+      }
+      return html`<div class="mu-block" key=${e.idx}>
+        <div class="mu-enemy">
+          <${ChampIcon} id=${e.champ} size=${34} />
+          <div class="mu-enemy-txt">
+            <b>${champ(e.champ).name}</b>
+            <span class="muted tiny">${ROLE_LABEL[e.role]}${e.auto ? ' (auto)' : ''}${wr ? html` · <span class=${wrClass(wr.wr)}>${pct(wr.wr)}</span> de victoires` : ''}</span>
+          </div>
+        </div>
+        ${e.stats.status === 'loading' && html`<p class="muted tiny">Chargement des stats…</p>`}
+        ${e.stats.status === 'error' && html`<p class="muted tiny">Stats indisponibles pour ce champion.</p>`}
+        ${e.stats.status === 'ok' && (rows.length
+          ? html`<ul class="mu-list">${rows.map((r) => html`<li key=${r.id} title=${r.players.join(', ')}>
+              <${ChampIcon} id=${r.id} size=${26} />
+              <span class="mu-name">${champ(r.id).name}<small class="muted"> ${r.players.join(', ')}</small></span>
+              ${r.m
+                ? html`<span class=${cx('mu-wr', wrClass(r.m.wr))} title=${`${r.m.games.toLocaleString('fr-FR')} parties`}>${pct(r.m.wr)}<small> ${r.m.games < 100 ? `(${r.m.games})` : ''}</small></span>`
+                : html`<span class="mu-wr muted" title="Pas assez de parties">—</span>`}
+            </li>`)}</ul>`
+          : html`<p class="muted tiny">Personne n’a de champion en ${ROLE_LABEL[e.role]} dans son pool.</p>`)}
+      </div>`;
+    })}
+  </section>`;
 }
 
 function PriorityPanel({ items }) {

@@ -71,6 +71,8 @@ const DD = 'https://ddragon.leagueoflegends.com';
 let version = null;
 let list = [];
 const byId = new Map();
+const byKey = new Map();
+const CACHE_KEY = 'cc.ddragon.v2';
 
 export const norm = (s) =>
   String(s || '')
@@ -113,7 +115,11 @@ export function setChampionData(payload) {
   version = payload.version;
   list = payload.list.map(enrich).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   byId.clear();
-  for (const c of list) byId.set(c.id, c);
+  byKey.clear();
+  for (const c of list) {
+    byId.set(c.id, c);
+    if (c.key) byKey.set(String(c.key), c);
+  }
   return { version, count: list.length };
 }
 
@@ -131,7 +137,7 @@ async function fetchJSON(url, ms = 9000) {
 
 /** Télécharge la dernière version de la liste des champions (avec cache local). */
 export async function loadChampions() {
-  const cached = lsGet('cc.ddragon');
+  const cached = lsGet(CACHE_KEY);
   let latest;
   try {
     latest = (await fetchJSON(`${DD}/api/versions.json`))[0];
@@ -144,6 +150,7 @@ export async function loadChampions() {
     const data = await fetchJSON(`${DD}/cdn/${latest}/data/fr_FR/champion.json`);
     const champs = Object.values(data.data).map((c) => ({
       id: c.id,
+      key: c.key,
       name: c.name,
       title: c.title,
       tags: c.tags,
@@ -151,7 +158,8 @@ export async function loadChampions() {
       image: c.image.full,
     }));
     const payload = { version: latest, list: champs };
-    lsSet('cc.ddragon', payload);
+    lsSet(CACHE_KEY, payload);
+    try { localStorage.removeItem('cc.ddragon'); } catch { /* ancien cache */ }
     return setChampionData(payload);
   } catch (err) {
     if (cached?.list?.length) return setChampionData(cached);
@@ -160,6 +168,8 @@ export async function loadChampions() {
 }
 
 export const allChamps = () => list;
+/** Champion par sa clé numérique Riot (ex. "103" pour Ahri). */
+export const champByKey = (key) => byKey.get(String(key)) || null;
 
 const unknown = new Map();
 /** Infos d'un champion par son id Riot (ex. "MonkeyKing" pour Wukong). */

@@ -78,6 +78,9 @@ puis ouvre <http://localhost:8080>. (Ou l'extension *Live Server* de VS Code.)
 - **Ajout rapide** : choisis la catégorie (*Ban adverse*, *Notre ban*, *Pick adverse*, *Notre pick*), tape un nom puis **Entrée**.
   Raccourcis : `/` pour aller dans la recherche, flèches haut/bas, `Tab` pour changer de catégorie. Les surnoms marchent (`mf`, `tf`, `j4`, `k6`, `lb`, `ww`, `yi`…).
 - Tu peux aussi cliquer sur une case vide. Les champions marqués d'un point doré sont dans vos pools.
+- **Picks adverses** : sous chaque pick ennemi, choisis son **rôle** (sinon « Auto » le devine d'après où il est le plus joué) et vois son **winrate** à ce rôle.
+  Le panneau **Matchups adverses** classe les champions de vos pools par winrate contre lui, et le moteur en tient compte : +0,5 pt par % au-dessus de 50 % (−0,5 en dessous, max ±4, lissé quand il y a peu de parties). Le badge « vs » sur chaque carte donne le winrate du matchup.
+  Source : statistiques publiques de U.GG (ranked solo/duo, patch en cours). Rang, région et importance se règlent dans ⚙ Réglages. Ce n'est pas une API officielle : si U.GG change son format, les winrates disparaissent mais le reste du site continue de marcher.
 - **Nos picks** : verrouille un champion qu'on vient de prendre (bouton cadenas sur la compo, ou case « Picks » de *Nous*). Le joueur peut rester en *Auto* ou être choisi.
 - **Compo recommandée** : la meilleure répartition joueur → poste → champion, avec sous chaque carte les **autres choix** du joueur à ce poste.
 - **Toutes les options** : les meilleures compos avec des répartitions de rôles différentes (clique pour afficher en grand).
@@ -106,6 +109,7 @@ css/styles.css        thème
 js/main.js            démarrage (équipe, données, rendu)
 js/data.js            champions (Data Dragon) + rôles/profils + recherche
 js/optimizer.js       moteur de compos (recherche exhaustive avec élagage)
+js/stats.js           winrates et matchups (U.GG)
 js/store.js           synchro Firebase / mode local
 js/actions.js         modifications + journal d'activité
 js/app.js             application (en-tête, onglets, modales)

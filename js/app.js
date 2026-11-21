@@ -9,6 +9,45 @@ import { ChampionPicker } from './picker.js';
 import { PlayersView, PoolEditor } from './players.js';
 import { DraftBoard } from './draft.js';
 import { CompsView } from './comps.js';
+import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, matchup, matchupPoints } from './stats.js';
+
+/** Charge (et garde en mémoire) les stats U.GG des champions demandés. */
+function useChampionStats(ids, cfg) {
+  const [map, setMap] = useState({});
+  const cfgKey = `${cfg.region}|${cfg.rank}`;
+  useEffect(() => {
+    let alive = true;
+    for (const id of ids) {
+      const k = `${id}|${cfgKey}`;
+      if (map[k]) continue;
+      setMap((m) => ({ ...m, [k]: { status: 'loading' } }));
+      loadChampionStats(id, cfg).then(
+        (data) => alive && setMap((m) => ({ ...m, [k]: { status: 'ok', data } })),
+        () => alive && setMap((m) => ({ ...m, [k]: { status: 'error' } })),
+      );
+    }
+    return () => { alive = false; };
+  }, [ids.join(','), cfgKey]);
+  return (id) => map[`${id}|${cfgKey}`] || { status: 'idle' };
+}
+
+/** Rôle de chaque pick adverse : celui choisi, sinon le plus probable parmi les rôles libres. */
+function assignEnemyRoles(picks, explicit, statsOf) {
+  const taken = new Set(explicit.filter((r, i) => r && picks[i]));
+  return picks.map((id, i) => {
+    if (!id) return null;
+    if (explicit[i]) return { role: explicit[i], auto: false };
+    const st = statsOf(id);
+    let order = champ(id).roles;
+    if (st.status === 'ok') {
+      const byGames = Object.entries(st.data.roles).sort((a, b) => b[1].games - a[1].games).map(([r]) => r);
+      order = byGames.length ? byGames : order;
+    }
+    const role = [...order, ...ROLES].find((r) => !taken.has(r)) || null;
+    if (role) taken.add(role);
+    return { role, auto: true };
+  });
+}
 
 function useSnapshot(store) {
   const [snap, setSnap] = useState(store.getSnapshot());
@@ -77,11 +116,34 @@ export function App({ store, room }) {
   const lockedChamps = useMemo(() => new Set(locks.map((l) => l.champ)), [locks]);
   const usedAll = useMemo(() => new Set([...unavailable, ...lockedChamps]), [unavailable, lockedChamps]);
 
+  // Picks adverses : rôle + stats de winrate.
+  const statsCfg = { rank: settings.statsRank || DEFAULT_STATS.rank, region: settings.statsRegion || DEFAULT_STATS.region };
+  const matchupWeight = typeof settings.matchupWeight === 'number' ? settings.matchupWeight : 1;
+  const enemyIds = slotValues(draft.enemyPicks);
+  const statsOf = useChampionStats(enemyIds.filter(Boolean), statsCfg);
+  const enemyRoles = assignEnemyRoles(enemyIds, slotValues(draft.enemyRoles), statsOf);
+  const enemies = enemyIds.map((id, idx) => (id ? { idx, champ: id, ...enemyRoles[idx], stats: statsOf(id) } : null));
+  const enemyByRole = {};
+  for (const e of enemies) if (e?.role && !enemyByRole[e.role]) enemyByRole[e.role] = e;
+  const muRaw = (id, role) => {
+    const e = enemyByRole[role];
+    if (!e || e.stats.status !== 'ok') return null;
+    const m = matchup(e.stats.data, role, id);
+    return m ? { ...m, vs: e.champ } : null;
+  };
+  const muFn = matchupWeight > 0
+    ? (id, role) => {
+      const m = muRaw(id, role);
+      return m ? { ...m, points: matchupPoints(m, matchupWeight) } : null;
+    }
+    : null;
+  const muKey = Object.entries(enemyByRole).map(([r, e]) => `${r}:${e.champ}:${e.stats.status}`).join(',');
+
   const engineKey = JSON.stringify([
     active.map((p) => [p.id, p.name, p.color, p.pool || {}, p.forcedRole || null]),
-    [...unavailable].sort(), locks, weight, limit,
+    [...unavailable].sort(), locks, weight, limit, muKey, matchupWeight, statsCfg,
   ]);
-  const opts = useMemo(() => ({ unavailable, locks, weight, limit }), [engineKey]);
+  const opts = useMemo(() => ({ unavailable, locks, weight, limit, matchup: muFn }), [engineKey]);
   const result = useMemo(() => solve(active, opts), [engineKey]);
 
   // Comp affichée en grand (on garde la même répartition si elle existe encore).
@@ -101,7 +163,7 @@ export function App({ store, room }) {
   const autoPlayer = useCallback((id) => result.comps[0]?.slots.find((s) => s.champ === id)?.player || null, [result]);
 
   const saved = useMemo(() => Object.entries(state.saved || {})
-    .map(([id, item]) => ({ id, item, ev: evaluateSaved(item, active, { unavailable, enemyPicks, locks, weight }) }))
+    .map(([id, item]) => ({ id, item, ev: evaluateSaved(item, active, { unavailable, enemyPicks, locks, weight, matchup: muFn }) }))
     .sort((a, b) => (b.ev.ok - a.ev.ok) || b.ev.score - a.ev.score), [state.saved, engineKey]);
 
   // ── Présence & activité ─────────────────────────────────────────────────
@@ -262,10 +324,12 @@ export function App({ store, room }) {
         : tab === 'draft'
         ? html`
           <${DraftBoard} draft=${draft} players=${active} actions=${actions} usedAll=${usedAll} owners=${owners}
-            autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef} />
+            autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef}
+            enemies=${enemies} />
           <${CompsView} result=${result} weight=${weight} selected=${selectedIndex}
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
-            priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length} />`
+            priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
+            enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw} />`
         : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds}
             unavailable=${unavailable} onAdd=${(playerId, role) => setPicker({ mode: 'pool', playerId, role })}
             onEdit=${(playerId, champId) => setEditing({ playerId, champId })} onAddPlayer=${() => setAddingPlayer(true)} />`}
@@ -440,12 +504,35 @@ function SettingsModal({ open, onClose, state, weight, limit, actions, room, mod
         </div>
       </section>
       <section>
+        <h4>Winrates des matchups</h4>
+        <p class="muted small">Notre winrate contre le pick adverse de la même lane (source : U.GG, patch en cours, ranked solo/duo).</p>
+        <div class="settings-row"><span class="muted small">Importance</span>
+          <div class="seg">
+            ${[[0, 'Ignorer'], [0.5, 'Léger'], [1, 'Normal'], [2, 'Fort']].map(([w, label]) => html`<button type="button"
+              class=${cx((state.settings?.matchupWeight ?? 1) === w && 'on')} onClick=${() => actions.setSetting('matchupWeight', w)}>${label}</button>`)}
+          </div>
+        </div>
+        <div class="settings-row"><span class="muted small">Rang</span>
+          <div class="seg">
+            ${STAT_RANKS.map(([v, label]) => html`<button type="button" class=${cx((state.settings?.statsRank || DEFAULT_STATS.rank) === v && 'on')}
+              onClick=${() => actions.setSetting('statsRank', v)}>${label}</button>`)}
+          </div>
+        </div>
+        <div class="settings-row"><span class="muted small">Région</span>
+          <div class="seg">
+            ${STAT_REGIONS.map(([v, label]) => html`<button type="button" class=${cx((state.settings?.statsRegion || DEFAULT_STATS.region) === v && 'on')}
+              onClick=${() => actions.setSetting('statsRegion', v)}>${label}</button>`)}
+          </div>
+        </div>
+      </section>
+      <section>
         <h4>Comment la note est calculée</h4>
         <ul class="scoring muted small">
           <li>Confort : S = ${TIER_VALUE[4]} pts, A = ${TIER_VALUE[3]}, B = ${TIER_VALUE[2]}, C = ${TIER_VALUE[1]} (pick verrouillé hors pool = ${OFFPOOL_VALUE}).</li>
           <li>Dégâts : +2 si bien mixte AD/AP, jusqu’à −5 si full AD ou full AP.</li>
           <li>Frontline : −4 s’il n’y en a aucune, +1,5 à partir de deux.</li>
           <li>Engage : −3 sans engage, +1 à partir de deux.</li>
+          <li>Matchup : +0,5 pt par % de winrate au-dessus de 50 % contre le pick adverse de la lane (−0,5 en dessous), max ±4. Les matchups peu joués sont ramenés vers 50 %.</li>
           <li>Les rôles et profils des champions sont modifiables dans <code>js/data.js</code>.</li>
         </ul>
       </section>

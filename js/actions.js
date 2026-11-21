@@ -84,7 +84,12 @@ export function makeActions(store, ctx) {
     // ── Draft ─────────────────────────────────────────────────────────────
     setSlot(group, idx, id) {
       const prev = S().draft?.[group]?.[idx];
-      store.set(`draft/${group}/${idx}`, id || null);
+      if (group === 'enemyPicks') {
+        // Nouveau champion (ou case vidée) : son rôle repasse en automatique.
+        store.update({ [`draft/enemyPicks/${idx}`]: id || null, [`draft/enemyRoles/${idx}`]: null });
+      } else {
+        store.set(`draft/${group}/${idx}`, id || null);
+      }
       const label = GROUP_LABEL[group].toLowerCase();
       if (id) log(`a ajouté ${cName(id)} en ${label}`, 'draft');
       else if (prev) log(`a retiré ${cName(prev)} des ${group.endsWith('Bans') ? 'bans' : 'picks adverses'}`, 'draft');
@@ -113,6 +118,12 @@ export function makeActions(store, ctx) {
       if (free < 0) return false;
       a.setOurPick(free, { champ: id, player: pid || null });
       return true;
+    },
+    /** Rôle joué par un pick adverse (null = deviner automatiquement). */
+    setEnemyRole(idx, role) {
+      const id = S().draft?.enemyPicks?.[idx];
+      store.set(`draft/enemyRoles/${idx}`, role || null);
+      if (id) log(role ? `a placé ${cName(id)} (adverse) en ${ROLE_LABEL[role]}` : `a remis le rôle de ${cName(id)} (adverse) en auto`, 'draft');
     },
     setSide(side) {
       store.set('draft/side', side);

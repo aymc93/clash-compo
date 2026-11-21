@@ -430,6 +430,33 @@ select:hover { border-color: var(--line-3); }
 .ourpick { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 74px; }
 .mini-select { width: 74px; height: 24px; font-size: 11px; padding: 0 18px 0 6px; background-position: right 5px center; background-size: 10px; }
 
+/* ── Winrates ──────────────────────────────────────────────────────────── */
+.wr-good { color: #3ddc97; }
+.wr-ok { color: #8fe3b9; }
+.wr-even { color: var(--text-2); }
+.wr-meh { color: #ffb37a; }
+.wr-bad { color: #ff6b81; }
+.wr-line { font: 700 12px/1 var(--display); letter-spacing: 0.02em; }
+.stats-credit { margin-top: -4px; }
+.sc-mu {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 3px; border-radius: 7px;
+  font: 700 13px/1 var(--display); background: #0a1020; border: 1px solid currentColor;
+  box-shadow: 0 4px 14px -4px #000;
+}
+.sc-mu img { width: 20px; height: 20px; border-radius: 5px; }
+.mu-block { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px; background: var(--bg-soft); border: 1px solid var(--line); }
+.mu-enemy { display: flex; align-items: center; gap: 10px; }
+.mu-enemy-txt { display: flex; flex-direction: column; min-width: 0; }
+.mu-enemy-txt b { font-size: 14px; }
+.mu-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.mu-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.mu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mu-name small { font-weight: 400; font-size: 11.5px; }
+.mu-wr { font: 700 13px var(--display); white-space: nowrap; }
+.mu-wr small { font: 500 10.5px var(--font); color: var(--text-3); }
+.settings-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.settings-row > span { width: 80px; }
+
 /* ── Résultats ─────────────────────────────────────────────────────────── */
 .comps-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
 .comps-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }

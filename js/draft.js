@@ -1,7 +1,8 @@
 // Tableau de draft : bans et picks des deux équipes + ajout rapide au clavier.
 import { html, useMemo, useState } from './vendor.js';
 import { cx } from './util.js';
-import { champ, iconUrl, searchChamps } from './data.js';
+import { ROLES, ROLE_LABEL, champ, iconUrl, searchChamps } from './data.js';
+import { pct, roleWinrate, wrClass } from './stats.js';
 import { DRAFT_GROUPS, GROUP_LABEL, slotValues } from './actions.js';
 import { ConfirmButton, Icon, toast } from './ui.js';
 
@@ -10,7 +11,7 @@ import { ConfirmButton, Icon, toast } from './ui.js';
  *         owners(id) → noms des joueurs qui l'ont en pool, autoPlayer(id) → joueur proposé par la meilleure compo,
  *         openSlot(group, idx), quickRef
  */
-export function DraftBoard({ draft = {}, players, actions, usedAll, owners, autoPlayer, openSlot, quickRef }) {
+export function DraftBoard({ draft = {}, players, actions, usedAll, owners, autoPlayer, openSlot, quickRef, enemies = [] }) {
   const side = draft.side === 'red' ? 'red' : 'blue';
   const enemySide = side === 'blue' ? 'red' : 'blue';
   const filled = (g) => slotValues(draft[g]).filter((v) => (g === 'ourPicks' ? v?.champ : v)).length;
@@ -39,12 +40,14 @@ export function DraftBoard({ draft = {}, players, actions, usedAll, owners, auto
       <${TeamRow} label="Nous" side=${side} ours bans=${slotValues(draft.ourBans)} picks=${slotValues(draft.ourPicks)}
         banGroup="ourBans" pickGroup="ourPicks" players=${players} actions=${actions} owners=${owners} autoPlayer=${autoPlayer} openSlot=${openSlot} />
       <${TeamRow} label="Eux" side=${enemySide} bans=${slotValues(draft.enemyBans)} picks=${slotValues(draft.enemyPicks)}
-        banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot} />
+        banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot}
+        enemies=${enemies} />
     </div>
+    ${enemies.some(Boolean) && html`<p class="muted tiny stats-credit">Winrates : U.GG, ranked solo/duo, patch en cours. Le rôle des picks adverses est deviné (« Auto ») tant que vous ne le précisez pas.</p>`}
   </section>`;
 }
 
-function TeamRow({ label, side, ours, bans, picks, banGroup, pickGroup, players, actions, owners, autoPlayer, openSlot }) {
+function TeamRow({ label, side, ours, bans, picks, banGroup, pickGroup, players, actions, owners, autoPlayer, openSlot, enemies }) {
   return html`<div class=${cx('team', `side-${side}`, ours && 'is-ours')}>
     <div class="team-label">
       <span class="side-dot"></span>
@@ -63,8 +66,8 @@ function TeamRow({ label, side, ours, bans, picks, banGroup, pickGroup, players,
       <div class="slots">
         ${picks.map((v, i) => (ours
           ? html`<${OurPick} key=${i} idx=${i} value=${v} players=${players} actions=${actions} autoPlayer=${autoPlayer} onOpen=${() => openSlot(pickGroup, i)} />`
-          : html`<${Slot} key=${i} kind="pick" id=${v} label=${`${GROUP_LABEL[pickGroup]} ${i + 1}`}
-              onOpen=${() => openSlot(pickGroup, i)} onClear=${() => actions.setSlot(pickGroup, i, null)} owners=${v ? owners(v) : ''} />`))}
+          : html`<${EnemyPick} key=${i} idx=${i} id=${v} enemy=${enemies[i]} actions=${actions}
+              onOpen=${() => openSlot(pickGroup, i)} owners=${v ? owners(v) : ''} />`))}
       </div>
     </div>
   </div>`;
@@ -83,6 +86,28 @@ function Slot({ kind, id, label, onOpen, onClear, owners }) {
     </button>
     <button type="button" class="slot-clear" onClick=${onClear} aria-label=${`Retirer ${c.name}`}><${Icon} name="x" size=${11} stroke=${3} /></button>
     ${owners && html`<span class="slot-warn" title=${`Dans le pool de ${owners}`}></span>`}
+  </div>`;
+}
+
+function EnemyPick({ idx, id, enemy, actions, onOpen, owners }) {
+  const slot = html`<${Slot} kind="pick" id=${id} label=${`Pick adverse ${idx + 1}`} onOpen=${onOpen}
+    onClear=${() => actions.setSlot('enemyPicks', idx, null)} owners=${owners} />`;
+  if (!id) return html`<div class="ourpick">${slot}</div>`;
+  const st = enemy?.stats;
+  const wr = st?.status === 'ok' && enemy.role ? roleWinrate(st.data, enemy.role) : null;
+  return html`<div class="ourpick">
+    ${slot}
+    <select class="mini-select" value=${enemy?.auto ? '' : enemy?.role || ''} aria-label="Rôle du pick adverse"
+      onChange=${(e) => actions.setEnemyRole(idx, e.currentTarget.value || null)}>
+      <option value="">${enemy?.auto && enemy.role ? `Auto · ${ROLE_LABEL[enemy.role]}` : 'Auto'}</option>
+      ${ROLES.map((r) => html`<option value=${r}>${ROLE_LABEL[r]}</option>`)}
+    </select>
+    ${st?.status === 'loading' && html`<span class="wr-line muted">…</span>`}
+    ${st?.status === 'error' && html`<span class="wr-line muted" title="Stats indisponibles">—</span>`}
+    ${st?.status === 'ok' && html`<span class=${cx('wr-line', wr && wrClass(wr.wr))}
+      title=${wr ? `${champ(id).name} en ${ROLE_LABEL[enemy.role]} : ${pct(wr.wr)} de victoires sur ${wr.games.toLocaleString('fr-FR')} parties` : 'Presque jamais joué à ce rôle'}>
+      ${wr ? pct(wr.wr) : 'rare'}
+    </span>`}
   </div>`;
 }
 
