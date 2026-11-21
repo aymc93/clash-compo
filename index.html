@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clash Compo</title>
+  <meta name="description" content="Prépare tes compos Clash League of Legends avec ton équipe, en direct.">
+  <meta name="theme-color" content="#070b14">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "https://cdn.jsdelivr.net/npm/preact@10.25.4/dist/preact.module.js",
+      "preact/hooks": "https://cdn.jsdelivr.net/npm/preact@10.25.4/hooks/dist/hooks.module.js",
+      "htm": "https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div class="boot">
+      <img class="boot-logo" src="favicon.svg" alt="" width="64" height="64">
+      <p class="boot-title">Clash Compo</p>
+      <p class="boot-text" id="boot-text">Chargement des champions…</p>
+    </div>
+  </div>
+  <script>
+    if (location.protocol === 'file:') {
+      document.getElementById('boot-text').innerHTML =
+        'Ce site doit être servi par un serveur web : les navigateurs bloquent les modules JavaScript en <code>file://</code>.<br>' +
+        'Lance <code>python -m http.server 8080</code> dans ce dossier puis ouvre <code>http://localhost:8080</code>, ou mets-le en ligne sur GitHub Pages (voir README).';
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
