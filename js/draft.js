@@ -1,20 +1,22 @@
 // Tableau de draft : bans et picks des deux équipes + ajout rapide au clavier.
-import { html, useMemo, useState } from './vendor.js';
+import { html, useEffect, useMemo, useState } from './vendor.js';
 import { cx } from './util.js';
 import { ROLES, ROLE_LABEL, champ, iconUrl, searchChamps } from './data.js';
 import { pct, roleWinrate, wrClass } from './stats.js';
 import { DRAFT_GROUPS, GROUP_LABEL, slotValues } from './actions.js';
-import { ConfirmButton, Icon, toast } from './ui.js';
+import { ChampIcon, ConfirmButton, Icon, toast } from './ui.js';
+import { DRAFT_STEPS, draftStep } from './insights.js';
 
 /**
  * Colonne de draft : ajout rapide, puis « Nous » et « Eux » (bans en ligne, picks en liste).
  * props : draft, players (titulaires), actions, usedAll, owners(id), autoPlayer(id), openSlot(group, idx), quickRef, enemies
  */
-export function DraftBoard({ draft = {}, players, actions, usedAll, owners, autoPlayer, openSlot, quickRef, enemies = [] }) {
+export function DraftBoard({ draft = {}, players, actions, usedAll, owners, autoPlayer, openSlot, quickRef, enemies = [], suggest = {}, onRecord, canRecord }) {
   const side = draft.side === 'red' ? 'red' : 'blue';
   const enemySide = side === 'blue' ? 'red' : 'blue';
   const filled = (g) => slotValues(draft[g]).filter((v) => (g === 'ourPicks' ? v?.champ : v)).length;
   const total = DRAFT_GROUPS.reduce((n, g) => n + filled(g), 0);
+  const step = draftStep(side, Object.fromEntries(DRAFT_GROUPS.map((g) => [g, filled(g)])));
 
   return html`<div class="draft">
     <div class="col-head">
@@ -30,12 +32,52 @@ export function DraftBoard({ draft = {}, players, actions, usedAll, owners, auto
       </div>
     </div>
 
-    <${QuickAdd} draft=${draft} actions=${actions} usedAll=${usedAll} owners=${owners} filled=${filled} inputRef=${quickRef} />
+    <${StepCard} step=${step} suggest=${suggest} actions=${actions} />
+
+    <${QuickAdd} draft=${draft} actions=${actions} usedAll=${usedAll} owners=${owners} filled=${filled} inputRef=${quickRef} stepGroup=${step?.group} />
 
     <${Team} label="Nous" side=${side} ours bans=${slotValues(draft.ourBans)} picks=${slotValues(draft.ourPicks)}
       banGroup="ourBans" pickGroup="ourPicks" players=${players} actions=${actions} owners=${owners} autoPlayer=${autoPlayer} openSlot=${openSlot} />
     <${Team} label="Eux" side=${enemySide} bans=${slotValues(draft.enemyBans)} picks=${slotValues(draft.enemyPicks)}
       banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot} enemies=${enemies} />
+
+    <div class="game-end">
+      <span class="muted small">Fin de partie</span>
+      <${ConfirmButton} class="btn btn-ghost btn-sm res-win" onConfirm=${() => onRecord(true)} confirmLabel="Noter la victoire ?"
+        title=${canRecord ? 'Enregistre la compo jouée dans l’historique, puis vide la draft' : 'Il faut une compo pour noter le résultat'}>
+        <${Icon} name="crown" size=${14} /> Victoire
+      <//>
+      <${ConfirmButton} class="btn btn-ghost btn-sm res-loss" onConfirm=${() => onRecord(false)} confirmLabel="Noter la défaite ?"
+        title=${canRecord ? 'Enregistre la compo jouée dans l’historique, puis vide la draft' : 'Il faut une compo pour noter le résultat'}>
+        Défaite
+      <//>
+    </div>
+  </div>`;
+}
+
+/** Étape en cours de la draft (ordre officiel) + ce qu'on conseille de faire. */
+function StepCard({ step, suggest, actions }) {
+  if (!step) {
+    return html`<div class="step-card is-done"><b>Draft terminée</b><span class="muted tiny">Bonne game ! Note le résultat en bas de la colonne.</span></div>`;
+  }
+  const ours = step.ours;
+  const title = ours
+    ? (step.kind === 'ban' ? 'À nous de bannir' : step.count > 1 ? `À nous : ${step.count} picks` : 'À nous de pick')
+    : (step.kind === 'ban' ? 'Ban adverse' : step.count > 1 ? `L’adversaire pick (${step.count})` : 'L’adversaire pick');
+  const s = ours ? (step.kind === 'ban' ? suggest.ban : suggest.pick) : null;
+  return html`<div class=${cx('step-card', ours ? 'is-ours' : 'is-theirs')}>
+    <div class="step-top">
+      <span class="step-n">Étape ${step.index + 1}/${DRAFT_STEPS} · phase ${step.phase}</span>
+      <div class="step-dots" aria-hidden="true">${Array.from({ length: DRAFT_STEPS }, (_, i) => html`<span class=${cx(i < step.index && 'done', i === step.index && 'now')}></span>`)}</div>
+    </div>
+    <b class="step-title">${title}</b>
+    ${s
+      ? html`<div class="step-sug">
+          <${ChampIcon} id=${s.champ} size=${34} />
+          <div class="step-sug-txt"><b>${champ(s.champ).name}</b><span class="muted tiny">${s.why}</span></div>
+          <button type="button" class="btn btn-gold btn-xs" onClick=${() => s.act()}>${step.kind === 'ban' ? 'Bannir' : 'Verrouiller'}</button>
+        </div>`
+      : html`<span class="muted tiny">${ours ? 'Choisis dans la recherche ci-dessous.' : 'Entre son choix dans la recherche ci-dessous.'}</span>`}
   </div>`;
 }
 
@@ -109,8 +151,10 @@ function OurPick({ idx, value, players, actions, autoPlayer, onOpen }) {
   </li>`;
 }
 
-function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef }) {
-  const [target, setTarget] = useState('enemyBans');
+function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef, stepGroup }) {
+  const [target, setTarget] = useState(stepGroup || 'enemyBans');
+  // La catégorie suit l'étape de la draft (on peut toujours la changer à la main).
+  useEffect(() => { if (stepGroup) setTarget(stepGroup); }, [stepGroup]);
   const [query, setQuery] = useState('');
   const [hi, setHi] = useState(0);
   const results = useMemo(

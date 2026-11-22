@@ -11,13 +11,17 @@ import { DraftBoard } from './draft.js';
 import { CompsView } from './comps.js';
 import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, matchup, matchupPoints } from './stats.js';
 import { STATS_TTL, accountsOf, fetchPlayerStats, mergeStats, riotKey } from './playerstats.js';
+import { banSuggestions, compSignature, historyStats } from './insights.js';
+import { ScoutView } from './scout.js';
+import { HistoryView } from './history.js';
+import { dispoOf } from './players.js';
 
 /**
  * Stats DeepLoL des joueurs, cumulées sur tous leurs comptes Riot.
  * Chaque compte est enregistré dans l'équipe (accstats/{joueur}/{compte}) : un seul membre le
  * télécharge, tout le monde le voit. Rafraîchi automatiquement au bout de STATS_TTL.
  */
-function usePlayerStats(players, accstats, actions, loaded) {
+function usePlayerStats(players, accstats, save, loaded) {
   const [local, setLocal] = useState({}); // `${pid}/${aid}` → { status: 'loading' | 'error', code, message, key }
   const inflight = useRef(new Set());
   const merged = useRef(new Map()); // pid → { sig, value }
@@ -34,7 +38,7 @@ function usePlayerStats(players, accstats, actions, loaded) {
     setLocal((m) => ({ ...m, [lk]: { status: 'loading', key } }));
     fetchPlayerStats(acc).then(
       (data) => {
-        actions.storeAccountStats(p.id, acc.id, { ...data, key });
+        save(p.id, acc.id, { ...data, key });
         setLocal((m) => ({ ...m, [lk]: null }));
       },
       (err) => setLocal((m) => ({ ...m, [lk]: { status: 'error', code: err.code || 'network', message: err.message, key } })),
@@ -132,7 +136,7 @@ export function App({ store, room }) {
   const snap = useSnapshot(store);
   const state = snap.state || {};
   const players = useMemo(() => sortPlayers(state.players), [state.players]);
-  const active = useMemo(() => players.filter((p) => p.active !== false), [players]);
+  const active = useMemo(() => players.filter((p) => dispoOf(p) !== 'no'), [players]);
 
   // ── Identité locale (qui suis-je dans cette équipe ?) ──────────────────
   const [me, setMeRaw] = useState(() => lsGet(`cc.me.${room}`));
@@ -203,7 +207,13 @@ export function App({ store, room }) {
   const muKey = Object.entries(enemyByRole).map(([r, e]) => `${r}:${e.champ}:${e.stats.status}`).join(',');
 
   // Stats des joueurs (Riot ID) et mode de calcul des compos.
-  const pstatsApi = usePlayerStats(players, state.accstats || {}, actions, snap.loaded);
+  const pstatsApi = usePlayerStats(players, state.accstats || {}, actions.storeAccountStats, snap.loaded);
+  // Repérage adverse : mêmes stats, pour les Riot ID de l'équipe d'en face.
+  const scoutEntities = useMemo(() => Object.entries(state.scout?.players || {})
+    .map(([id, x]) => ({ id, order: x.order || 0, riot: { name: x.name, tag: x.tag, platform: x.platform } }))
+    .filter((x) => x.riot.name && x.riot.tag)
+    .sort((a, b) => a.order - b.order), [state.scout]);
+  const scoutApi = usePlayerStats(scoutEntities, state.scoutstats || {}, actions.storeScoutStats, snap.loaded);
   const [compMode, setCompModeRaw] = useState(() => lsGet('cc.compMode', 'tiers'));
   const setCompMode = (m) => { setCompModeRaw(m); lsSet('cc.compMode', m); setSelectedKey(null); };
   const statsMode = compMode === 'stats';
@@ -239,6 +249,50 @@ export function App({ store, room }) {
       unavailable, enemyPicks, locks, weight, matchup: muFn, stats: item.mode === 'stats' ? pstatsApi.statsOf : null,
     }) }))
     .sort((a, b) => (b.ev.ok - a.ev.ok) || b.ev.score - a.ev.score), [state.saved, engineKey, pstatsKey]);
+
+  // ── Historique ──────────────────────────────────────────────────────────
+  const games = useMemo(() => Object.entries(state.games || {})
+    .map(([id, g]) => ({ id, ...g }))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0)), [state.games]);
+  const hist = useMemo(() => historyStats(games), [games]);
+  const records = useMemo(() => Object.fromEntries(saved
+    .map(({ id, item }) => [id, hist.bySig[compSignature(item.slots)]])
+    .filter(([, r]) => r)), [saved, hist]);
+
+  // ── Bans conseillés ─────────────────────────────────────────────────────
+  const best = result.comps[0] || null;
+  const bestIds = best ? best.slots.map((s) => s.champ) : [];
+  const counterStats = useChampionStats(bestIds, statsCfg);
+  const scoutData = scoutEntities.map((e) => ({ name: e.riot.name, ps: scoutApi.statsOf(e) })).filter((x) => x.ps);
+  const scoutKey = scoutData.map((x) => `${x.name}:${x.ps.ts}`).join(',');
+  const counterKey = bestIds.map((id) => `${id}:${counterStats(id).status}`).join(',');
+  const bans = useMemo(() => banSuggestions({
+    scouts: scoutData,
+    comp: best,
+    counterOf: (id) => { const st = counterStats(id); return st.status === 'ok' ? st.data : null; },
+    unavailable: usedAll,
+    protect: new Set(bestIds),
+  }), [scoutKey, counterKey, best?.key, [...usedAll].join(',')]);
+  const scoutBans = useMemo(() => banSuggestions({ scouts: scoutData, unavailable: usedAll, limit: 6 }), [scoutKey, [...usedAll].join(',')]);
+
+  // Conseil de l'étape de draft en cours.
+  const draftSuggest = {
+    ban: bans[0] ? { champ: bans[0].champ, why: bans[0].reasons[0], act: () => actions.banNext(bans[0].champ) } : null,
+    pick: (() => {
+      const top = (priority || []).find((x) => !lockedChamps.has(x.champ));
+      const slot = top || best?.slots.find((x) => !lockedChamps.has(x.champ));
+      if (!slot) return null;
+      return { champ: slot.champ, why: `${slot.player.name} · ${ROLE_LABEL[slot.role]}${top && top.points > 0 ? ` · −${top.points === Infinity ? '∞' : top.points} si on le perd` : ''}`, act: () => actions.toggleLock(slot.champ, slot.player.id) };
+    })(),
+  };
+  const recordGame = (win) => {
+    if (!best) { toast({ text: 'Il faut une compo complète pour noter le résultat.', type: 'warn' }); return; }
+    const slots = Object.fromEntries(best.slots.map((x) => [x.role, { champ: x.champ, player: x.player.id, name: x.player.name }]));
+    const enemy = enemies.filter(Boolean).map((e) => ({ champ: e.champ, role: e.role || null }));
+    actions.recordGame({ win, slots, enemy, opponent: state.scout?.team || null, mode: compMode });
+    actions.resetDraft();
+    toast({ text: `${win ? 'Victoire' : 'Défaite'} notée dans l’historique. La draft est vidée pour la suite.`, type: 'ok' });
+  };
 
   // ── Présence & activité ─────────────────────────────────────────────────
   const onlineList = useMemo(() => {
@@ -362,6 +416,12 @@ export function App({ store, room }) {
         <button type="button" role="tab" aria-selected=${tab === 'draft'} class=${cx('tab', tab === 'draft' && 'on')} onClick=${() => setTab('draft')}>
           <${Icon} name="swords" size=${17} /> Draft & compos
         </button>
+        <button type="button" role="tab" aria-selected=${tab === 'scout'} class=${cx('tab', tab === 'scout' && 'on')} onClick=${() => setTab('scout')}>
+          <${Icon} name="target" size=${17} /> Adversaires ${scoutEntities.length > 0 && html`<span class="tab-count">${scoutEntities.length}</span>`}
+        </button>
+        <button type="button" role="tab" aria-selected=${tab === 'history'} class=${cx('tab', tab === 'history' && 'on')} onClick=${() => setTab('history')}>
+          <${Icon} name="crown" size=${17} /> Historique ${games.length > 0 && html`<span class="tab-count">${hist.wins}-${hist.losses}</span>`}
+        </button>
         <button type="button" role="tab" aria-selected=${tab === 'team'} class=${cx('tab', tab === 'team' && 'on')} onClick=${() => setTab('team')}>
           <${Icon} name="users" size=${17} /> Joueurs <span class="tab-count">${players.length}</span>
         </button>
@@ -400,15 +460,21 @@ export function App({ store, room }) {
           <aside class="col col-draft" aria-label="Draft">
             <${DraftBoard} draft=${draft} players=${active} actions=${actions} usedAll=${usedAll} owners=${owners}
               autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef}
-              enemies=${enemies} />
+              enemies=${enemies} suggest=${draftSuggest} onRecord=${recordGame} canRecord=${!!best} />
           </aside>
           <${CompsView} result=${result} weight=${weight} selected=${selectedIndex}
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
             priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
             enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw}
-            mode=${compMode} onMode=${setCompMode} withStats=${withStats} />
+            mode=${compMode} onMode=${setCompMode} withStats=${withStats} bans=${bans} records=${records} teamName=${teamName} />
         </div>`
-        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi}
+        : tab === 'scout'
+        ? html`<${ScoutView} team=${state.scout?.team || ''} actions=${actions} unavailable=${usedAll} bans=${scoutBans}
+            onRefresh=${() => scoutEntities.forEach((e) => scoutApi.refresh(e))}
+            scouts=${scoutEntities.map((e) => ({ id: e.id, riot: e.riot, ps: scoutApi.statsOf(e), status: scoutApi.accountsStatus(e)[0] || { status: 'loading' } }))} />`
+        : tab === 'history'
+        ? html`<${HistoryView} games=${games} stats=${hist} players=${players} saved=${saved} actions=${actions} onGoDraft=${() => setTab('draft')} />`
+        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi} clashDate=${state.meta?.clashDate || ''}
             unavailable=${unavailable} onAdd=${(playerId, role) => setPicker({ mode: 'pool', playerId, role })}
             onEdit=${(playerId, champId) => setEditing({ playerId, champId })} onAddPlayer=${() => setAddingPlayer(true)} />`}
     </main>

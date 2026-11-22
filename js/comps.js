@@ -7,6 +7,7 @@ import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
 import { ChampIcon, ConfirmButton, EditableText, Icon, RoleIcon, TierPill, toast } from './ui.js';
 import { kdaTxt } from './playerstats.js';
+import { copyText, discordText, recordTxt } from './insights.js';
 
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
 
@@ -14,7 +15,7 @@ const compSig = (slots) => ROLES.map((r) => `${slots[r]?.champ}:${slots[r]?.play
 const OPTIONS_SHOWN = 4;
 
 /** Rend deux colonnes : la compo (centre) et le panneau latéral. */
-export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0 }) {
+export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0, bans = [], records = {}, teamName = 'Mon équipe' }) {
   const comps = result.comps;
   const [showAll, setShowAll] = useState(false);
   const savedSigs = new Map(saved.map(({ item }) => [compSig(item.slots || {}), item.name]));
@@ -29,7 +30,7 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
     </div>
     ${current
       ? html`
-        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions}
+        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} teamName=${teamName}
           mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
         ${comps.length > 1 && html`<div class="options">
           <div class="options-head">
@@ -49,15 +50,16 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
   </section>`;
 
   return [center, html`<${SidePanel} key="side" priority=${current ? priority : []} weight=${weight} saved=${saved} actions=${actions}
-    enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} hasComp=${!!current} />`];
+    enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} hasComp=${!!current} bans=${bans} records=${records} teamName=${teamName} />`];
 }
 
 /** Panneau latéral à onglets : une seule chose à la fois. */
-function SidePanel({ priority, weight, saved, actions, enemies, players, unavailable, muRaw, hasComp }) {
+function SidePanel({ priority, weight, saved, actions, enemies, players, unavailable, muRaw, hasComp, bans, records, teamName }) {
   const muCount = enemies.filter((e) => e?.role).length;
   const [tab, setTabRaw] = useState(() => lsGet('cc.sideTab', 'prio'));
   const setTab = (t) => { setTabRaw(t); lsSet('cc.sideTab', t); };
   const tabs = [
+    ['bans', 'Bans', null, 'Bans conseillés : mains et one-tricks adverses (onglet Adversaires) et champions qui contrent notre meilleure compo.'],
     ['prio', 'Priorités', null, 'Ce que la meilleure compo perd si l’adversaire ban ou prend ce champion : pick tôt ceux du haut.'],
     ['mu', 'Matchups', muCount || null, 'Notre winrate contre chaque pick adverse, dans sa lane, avec les champions de nos pools.'],
     ['saved', 'Gardées', saved.length || null, 'Compos validées par l’équipe. Pendant la draft, une compo devient « cassée » si un de ses champions est banni ou pris.'],
@@ -69,11 +71,12 @@ function SidePanel({ priority, weight, saved, actions, enemies, players, unavail
       </button>`)}
     </div>
     <div class="side-body">
+      ${tab === 'bans' && html`<${BanPanel} bans=${bans} actions=${actions} />`}
       ${tab === 'prio' && (hasComp
         ? html`<${PriorityPanel} items=${priority} weight=${weight} />`
         : html`<p class="side-empty muted small">Les priorités de pick apparaissent dès qu’une compo est possible.</p>`)}
       ${tab === 'mu' && html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`}
-      ${tab === 'saved' && html`<${SavedPanel} saved=${saved} actions=${actions} />`}
+      ${tab === 'saved' && html`<${SavedPanel} saved=${saved} actions=${actions} records=${records} teamName=${teamName} />`}
     </div>
   </aside>`;
 }
@@ -127,10 +130,15 @@ function ModeSwitch({ mode, onMode, withStats, total, onGoPlayers }) {
   </div>`;
 }
 
-function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName }) {
+function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName, teamName }) {
   const r = rating(comp.score, weight);
   const bal = comp.balance;
   const stats = mode === 'stats';
+  const share = async () => {
+    const slots = Object.fromEntries(comp.slots.map((s) => [s.role, { champ: s.champ, name: s.player.name }]));
+    const ok = await copyText(discordText({ title: `Compo Clash — ${teamName}`, rating: r, slots }));
+    if (ok) toast({ text: 'Compo copiée : colle-la sur Discord (Ctrl+V).', type: 'ok' });
+  };
   const keep = () => {
     actions.saveComp(comp, mode);
     toast({ text: 'Compo validée : elle est gardée dans « Compos enregistrées » pour toute l’équipe.', type: 'ok' });
@@ -153,11 +161,16 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
       <span class="muted small">
         ${comp.bench.length > 0 && html`<${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b>`}
       </span>
+      <div class="hero-actions">
+      <button type="button" class="btn btn-ghost" onClick=${share} title="Copier la compo en texte, prêt à coller sur Discord">
+        <${Icon} name="link" size=${15} /> Copier pour Discord
+      </button>
       ${savedName
         ? html`<span class="kept"><${Icon} name="check" size=${16} /> Compo gardée · <b>${savedName}</b></span>`
         : html`<button type="button" class="btn btn-gold" onClick=${keep} title="Garder cette compo dans « Compos enregistrées » (visible par toute l’équipe)">
             <${Icon} name="check" size=${16} /> Valider et garder
           </button>`}
+      </div>
     </footer>
   </article>`;
 }
@@ -309,7 +322,28 @@ function PriorityPanel({ items }) {
   </div>`;
 }
 
-function SavedPanel({ saved, actions }) {
+/** Bans conseillés, avec la raison principale et un bouton pour bannir. */
+function BanPanel({ bans, actions }) {
+  if (!bans.length) {
+    return html`<p class="side-empty muted small">Ajoute les Riot ID adverses dans l’onglet <b>Adversaires</b> : leurs mains apparaîtront ici. Les champions qui contrent notre meilleure compo s’affichent aussi dès que les stats sont chargées.</p>`;
+  }
+  const ban = (id) => {
+    if (actions.banNext(id)) toast({ text: `${champ(id).name} ajouté à nos bans`, type: 'ok', champ: id });
+    else toast({ text: 'Nos 5 bans sont déjà pris.', type: 'warn' });
+  };
+  return html`<ol class="bans">
+    ${bans.map((b) => html`<li class="ban-item" key=${b.champ} title=${b.reasons.join('\n')}>
+      <${ChampIcon} id=${b.champ} size=${36} />
+      <div class="prio-txt">
+        <b>${champ(b.champ).name}</b>
+        <span class="muted tiny">${b.reasons[0]}${b.reasons.length > 1 ? ` (+${b.reasons.length - 1})` : ''}</span>
+      </div>
+      <button type="button" class="btn btn-ghost btn-xs" onClick=${() => ban(b.champ)}>Bannir</button>
+    </li>`)}
+  </ol>`;
+}
+
+function SavedPanel({ saved, actions, records = {}, teamName }) {
   return html`<div class="side-list">
     ${saved.length === 0
       ? html`<p class="side-empty muted small">Aucune compo gardée. Clique sur « Valider et garder » sous une compo : pendant la draft, tu verras tout de suite si un ban la casse.</p>`
@@ -318,7 +352,12 @@ function SavedPanel({ saved, actions }) {
           <div class="saved-head">
             <${EditableText} value=${item.name} onCommit=${(v) => actions.renameSaved(id, v)} class="saved-name" ariaLabel="Nom de la compo" />
             ${item.mode === 'stats' && html`<span class="tag tag-stats" title="Proposée d’après les stats des joueurs">Stats</span>`}
+            ${records[id] && html`<span class="tag tag-rec" title="Bilan en partie">${recordTxt(records[id])}</span>`}
             <span class=${cx('saved-status', ev.ok ? scoreClass(ev.rating) : 'ko')}>${ev.ok ? `${ev.rating}/100` : 'Cassée'}</span>
+            <button type="button" class="icon-btn icon-btn-sm" title="Copier pour Discord" aria-label="Copier pour Discord"
+              onClick=${async () => { if (await copyText(discordText({ title: `${item.name} — ${teamName}`, rating: ev.ok ? ev.rating : null, slots: item.slots || {} }))) toast({ text: 'Compo copiée pour Discord.', type: 'ok' }); }}>
+              <${Icon} name="link" size=${13} />
+            </button>
             <${ConfirmButton} class="icon-btn icon-btn-sm" onConfirm=${() => actions.removeSaved(id)} confirmLabel=${html`<${Icon} name="check" size=${14} />`} title="Supprimer">
               <${Icon} name="trash" size=${14} />
             <//>

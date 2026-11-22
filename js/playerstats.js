@@ -50,6 +50,8 @@ export function mergeStats(list) {
   if (!valid.length) return null;
   if (valid.length === 1) return { ...valid[0], accounts: 1 };
   const out = { season: valid[0].season, ts: Math.min(...valid.map((s) => s.ts || 0)), total: null, roles: {}, champs: {}, accounts: valid.length };
+  const ranked = valid.filter((v) => bestRank(v)).sort((a, b) => rankValue(bestRank(b)) - rankValue(bestRank(a)));
+  if (ranked.length) out.rank = ranked[0].rank;
   for (const s of valid) {
     out.total = mergeRow(out.total, s.total);
     for (const [role, r] of Object.entries(s.roles || {})) {
@@ -117,7 +119,11 @@ export async function fetchPlayerStats(riot) {
     throw new StatsError('notfound', 'Compte introuvable : vérifie le pseudo, le #tag et la région.');
   }
   const season = await currentSeason();
-  const cs = await getJson(`${API}/summoner/champion-stat?${new URLSearchParams({ puu_id: info.puu_id, season, platform_id: platform })}`);
+  const [cs, rt] = await Promise.all([
+    getJson(`${API}/summoner/champion-stat?${new URLSearchParams({ puu_id: info.puu_id, season, platform_id: platform })}`),
+    getJson(`${API}/summoner/summoner-realtime?${new URLSearchParams({ puu_id: info.puu_id, platform_id: platform, summoner_id: '' })}`).catch(() => ({})),
+  ]);
+  const rank = parseRank(rt?.season_tier_info_dict);
   const src = cs.counter_champion_stats?.total;
   const lists = src?.enemy_champion_stats;
   const all = lists?.All || [];
@@ -143,9 +149,38 @@ export async function fetchPlayerStats(riot) {
   return {
     riot: { name: info.riot_id_name || riot.name, tag: info.riot_id_tag_line || riot.tag, platform },
     season, ts: Date.now(), level: info.level || 0,
-    total: row(totalRow), roles, champs,
+    total: row(totalRow), roles, champs, ...(rank ? { rank } : {}),
   };
 }
+
+// ── Rang classé ─────────────────────────────────────────────────────────────
+export const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
+const TIER_FR = {
+  IRON: 'Fer', BRONZE: 'Bronze', SILVER: 'Argent', GOLD: 'Or', PLATINUM: 'Platine', EMERALD: 'Émeraude',
+  DIAMOND: 'Diamant', MASTER: 'Maître', GRANDMASTER: 'Grand maître', CHALLENGER: 'Challenger',
+};
+const ROMAN = ['', 'I', 'II', 'III', 'IV'];
+function parseQueue(q) {
+  const tier = String(q?.tier || '').toUpperCase();
+  if (!TIERS.includes(tier)) return null;
+  return { tier, div: q.division || 0, lp: q.league_points || 0, w: q.wins || 0, l: q.losses || 0 };
+}
+function parseRank(d) {
+  const solo = parseQueue(d?.ranked_solo_5x5);
+  const flex = parseQueue(d?.ranked_flex_sr);
+  return solo || flex ? { ...(solo ? { solo } : {}), ...(flex ? { flex } : {}) } : null;
+}
+/** Valeur comparable d'un rang (plus haut = meilleur). */
+export const rankValue = (r) => (r ? TIERS.indexOf(r.tier) * 1000 + (r.div ? (5 - r.div) * 100 : 400) + Math.min(r.lp, 99) : -1);
+/** « Émeraude II · 45 LP » */
+export function rankLabel(r) {
+  if (!r) return '';
+  const apex = ['MASTER', 'GRANDMASTER', 'CHALLENGER'].includes(r.tier);
+  return `${TIER_FR[r.tier]}${apex ? '' : ` ${ROMAN[r.div] || ''}`} · ${r.lp} LP`;
+}
+export const tierClass = (r) => (r ? `rk-${r.tier.toLowerCase()}` : '');
+/** Meilleur rang (solo, sinon flex) d'un résumé de stats. */
+export const bestRank = (ps) => ps?.rank?.solo || ps?.rank?.flex || null;
 
 /** Rôle le plus joué → { role, share }. */
 export function mainRole(ps) {

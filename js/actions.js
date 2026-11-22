@@ -63,8 +63,17 @@ export function makeActions(store, ctx) {
       log(`a retiré ${name} de l’équipe`);
     },
     setActive(pid, active) {
-      store.set(`players/${pid}/active`, active);
-      log(active ? `a remis ${pName(pid)} titulaire` : `a mis ${pName(pid)} remplaçant`);
+      a.setDispo(pid, active ? 'yes' : 'no');
+    },
+    /** Disponibilité pour le prochain Clash : 'yes' | 'maybe' | 'no' (absent = exclu des compos). */
+    setDispo(pid, dispo) {
+      store.update({ [`players/${pid}/dispo`]: dispo, [`players/${pid}/active`]: dispo !== 'no' });
+      const txt = { yes: 'disponible', maybe: 'peut-être disponible', no: 'absent' }[dispo];
+      log(me().playerId === pid ? `s’est mis ${txt} pour le prochain Clash` : `a mis ${pName(pid)} ${txt} pour le prochain Clash`, 'edit', `dispo:${pid}`);
+    },
+    setClashDate(date) {
+      store.set('meta/clashDate', date || null);
+      log(date ? `a fixé le prochain Clash au ${new Date(`${date}T12:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}` : 'a retiré la date du prochain Clash');
     },
     /** Ajoute un compte Riot ({ name, tag, platform }) au joueur : ses stats seront chargées et cumulées. */
     addAccount(pid, riot) {
@@ -191,6 +200,64 @@ export function makeActions(store, ctx) {
       const old = S().saved?.[id]?.name;
       store.set(`saved/${id}`, null);
       log(`a supprimé la compo « ${old} »`);
+    },
+
+    // ── Repérage de l'équipe adverse ─────────────────────────────────────
+    /** Ajoute des adversaires : [{ name, tag, platform }]. */
+    addScouts(list) {
+      const cur = Object.values(S().scout?.players || {});
+      const have = new Set(cur.map((x) => `${x.name}#${x.tag}`.toLowerCase()));
+      const updates = {};
+      let n = 0;
+      list.forEach((r, i) => {
+        const k = `${r.name}#${r.tag}`.toLowerCase();
+        if (have.has(k) || cur.length + n >= 10) return;
+        have.add(k);
+        updates[`scout/players/${uid('e')}`] = { ...r, order: Date.now() + i };
+        n++;
+      });
+      if (!n) return 0;
+      store.update(updates);
+      log(`a ajouté ${n} adversaire${n > 1 ? 's' : ''} à repérer`);
+      return n;
+    },
+    removeScout(sid) {
+      const x = S().scout?.players?.[sid];
+      store.update({ [`scout/players/${sid}`]: null, [`scoutstats/${sid}`]: null });
+      if (x) log(`a retiré ${x.name}#${x.tag} du repérage`);
+    },
+    setScoutTeam(name) {
+      store.set('scout/team', name || null);
+      log(`a nommé l’équipe adverse « ${name} »`, 'edit', 'scout-team');
+    },
+    clearScouts() {
+      store.update({ scout: null, scoutstats: null });
+      log('a vidé le repérage adverse');
+    },
+    storeScoutStats(sid, aid, data) {
+      store.set(`scoutstats/${sid}/${aid}`, data);
+    },
+    /** Ajoute un champion à nos bans (premier emplacement libre). */
+    banNext(id) {
+      const bans = slotValues(S().draft?.ourBans);
+      if (bans.includes(id)) return true;
+      const free = bans.findIndex((v) => !v);
+      if (free < 0) return false;
+      a.setSlot('ourBans', free, id);
+      return true;
+    },
+
+    // ── Historique des parties ────────────────────────────────────────────
+    /** Enregistre une partie : { win, slots: { role: { champ, player, name } }, enemy: [{ champ, role }], opponent, mode } */
+    recordGame(game) {
+      const id = uid('g');
+      store.set(`games/${id}`, { ...game, ts: Date.now(), by: me().name });
+      log(`a noté une ${game.win ? 'victoire' : 'défaite'}${game.opponent ? ` contre ${game.opponent}` : ''}`, 'draft');
+      return id;
+    },
+    removeGame(id) {
+      store.set(`games/${id}`, null);
+      log('a supprimé une partie de l’historique');
     },
 
     // ── Réglages ──────────────────────────────────────────────────────────

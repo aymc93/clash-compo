@@ -3,25 +3,33 @@ import { html, useEffect, useRef, useState } from './vendor.js';
 import { cx, plural, timeAgo } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, TIER_NAME, champ, centeredUrl, splashUrl } from './data.js';
 import { pct, wrClass } from './stats.js';
-import { DEFAULT_PLATFORM, PLATFORMS, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, riotKey, topChamps, unpack } from './playerstats.js';
-import { Avatar, ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, Switch, TierPicker, TierPill, toast } from './ui.js';
+import { DEFAULT_PLATFORM, PLATFORMS, bestRank, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, rankLabel, riotKey, tierClass, topChamps, unpack } from './playerstats.js';
+import { PRACTICE_TIER, poolGaps } from './insights.js';
+import { Avatar, ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, TierPicker, TierPill, toast } from './ui.js';
 
 const byTier = (a, b) => b.tier - a.tier || champ(a.id).name.localeCompare(champ(b.id).name, 'fr');
 
-export function PlayersView({ players, actions, meId, onlineIds, unavailable, onAdd, onEdit, onAddPlayer, pstats }) {
-  const active = players.filter((p) => p.active !== false);
+export const dispoOf = (p) => p.dispo || (p.active === false ? 'no' : 'yes');
+const DISPO = [['yes', 'Dispo', 'Disponible pour le prochain Clash'], ['maybe', '?', 'Peut-être disponible'], ['no', 'Absent', 'Absent : pas pris dans les compos']];
+
+export function PlayersView({ players, actions, meId, onlineIds, unavailable, onAdd, onEdit, onAddPlayer, pstats, clashDate }) {
+  const active = players.filter((p) => dispoOf(p) !== 'no');
   const [importing, setImporting] = useState(null); // id du joueur
   const importPlayer = importing ? players.find((p) => p.id === importing) : null;
   return html`<div class="players-view">
     <div class="view-head">
       <div>
         <h1>Joueurs</h1>
-        <p class="muted">Chacun lie son Riot ID et ajoute ses champions, avec un niveau par rôle.</p>
+        <p class="muted">Chacun lie son Riot ID, ajoute ses champions et dit s’il est dispo.</p>
       </div>
-      <button type="button" class="btn btn-gold" onClick=${onAddPlayer}><${Icon} name="userPlus" size=${17} /> Ajouter un joueur</button>
+      <div class="row-gap">
+        <${ClashDate} date=${clashDate} players=${players} actions=${actions} />
+        <button type="button" class="btn btn-gold" onClick=${onAddPlayer}><${Icon} name="userPlus" size=${17} /> Ajouter un joueur</button>
+      </div>
     </div>
 
     ${players.length > 0 && html`<${Coverage} players=${active} />`}
+    ${active.length >= 2 && html`<${Practice} players=${active} statsOf=${pstats.statsOf} actions=${actions} />`}
 
     <div class="player-grid">
       ${players.map((p) => html`<${PlayerCard} key=${p.id} p=${p} actions=${actions} isMe=${p.id === meId}
@@ -30,7 +38,7 @@ export function PlayersView({ players, actions, meId, onlineIds, unavailable, on
       <button type="button" class="pcard pcard-add" onClick=${onAddPlayer}>
         <${Icon} name="userPlus" size=${26} />
         <span>Ajouter un joueur</span>
-        <small class="muted">Un remplaçant ? Ajoute-le aussi : le moteur choisit les 5 meilleurs titulaires.</small>
+        <small class="muted">Un remplaçant ? Ajoute-le aussi : le moteur choisit les 5 meilleurs parmi les joueurs dispo.</small>
       </button>
     </div>
 
@@ -49,7 +57,9 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
       .map(([id, roles]) => ({ id, tier: roles[r] }))
       .sort(byTier),
   }));
-  const bench = p.active === false;
+  const dispo = dispoOf(p);
+  const bench = dispo === 'no';
+  const rank = ps ? bestRank(ps) : null;
 
   return html`<article class=${cx('pcard', bench && 'is-bench', isMe && 'is-me')} style=${{ '--pc': p.color }}>
     <header class="pcard-head">
@@ -59,12 +69,14 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
         <div class="pcard-sub">
           ${isMe && html`<span class="tag tag-gold">Toi</span>`}
           ${online && html`<span class="tag tag-green">En ligne</span>`}
-          <span class="muted">${plural(count, 'champion')}</span>
+          ${rank
+            ? html`<span class=${cx('rank', tierClass(rank))} title=${`Rang ${rank === ps.rank?.solo ? 'solo/duo' : 'flex'}${rank.w + rank.l ? ` · ${rank.w}V ${rank.l}D` : ''}`}>${rankLabel(rank)}</span>`
+            : html`<span class="muted">${plural(count, 'champion')}</span>`}
         </div>
       </div>
-      <div class="pcard-status">
-        <${Switch} checked=${!bench} onChange=${(v) => actions.setActive(p.id, v)} label=${bench ? 'Remplaçant : cliquer pour le rendre titulaire' : 'Titulaire : cliquer pour le mettre remplaçant'} />
-        <span class=${cx('status-txt', bench && 'muted')}>${bench ? 'Remplaçant' : 'Titulaire'}</span>
+      <div class="seg seg-sm seg-dispo" role="group" aria-label="Disponibilité pour le prochain Clash">
+        ${DISPO.map(([v, label, tip]) => html`<button type="button" class=${cx(dispo === v && `on d-${v}`)} title=${tip}
+          onClick=${() => dispo !== v && actions.setDispo(p.id, v)}>${label}</button>`)}
       </div>
     </header>
 
@@ -107,6 +119,48 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
   </article>`;
 }
 
+/** Date du prochain Clash + qui est dispo. */
+function ClashDate({ date, players, actions }) {
+  const count = (d) => players.filter((p) => dispoOf(p) === d).length;
+  const days = date ? Math.round((new Date(`${date}T12:00`) - new Date(new Date().toDateString() + ' 12:00')) / 86400000) : null;
+  const when = days == null ? '' : days === 0 ? 'aujourd’hui' : days === 1 ? 'demain' : days > 1 ? `dans ${days} jours` : 'passé';
+  return html`<label class="clash-date" title="Date du prochain Clash">
+    <span class="muted small">Prochain Clash</span>
+    <input type="date" class="input input-sm" value=${date || ''} onChange=${(e) => actions.setClashDate(e.currentTarget.value)} />
+    ${date && html`<span class="small">${when} · <b class="wr-good">${count('yes')}</b> dispo${count('maybe') ? html` · <b class="wr-meh">${count('maybe')}</b> ?` : ''}</span>`}
+  </label>`;
+}
+
+/** Trous dans les pools + champions conseillés à travailler. */
+function Practice({ players, statsOf, actions }) {
+  const [open, setOpen] = useState(true);
+  const gaps = poolGaps(players, statsOf);
+  if (!gaps.length) return null;
+  const add = (p, id, role) => {
+    actions.setTier(p.id, id, role, PRACTICE_TIER);
+    toast({ text: `${champ(id).name} ajouté au pool de ${p.name} (${ROLE_LABEL[role]}, niveau C) : à travailler !`, type: 'ok', champ: id });
+  };
+  return html`<section class="practice">
+    <button type="button" class="practice-head" onClick=${() => setOpen(!open)} aria-expanded=${open}>
+      <${Icon} name="target" size=${16} /> <b>Champions à travailler</b> <span class="tab-n">${gaps.length}</span>
+      <${Icon} name="chevron" size=${16} class=${cx('chev', open && 'open')} />
+    </button>
+    ${open && html`<ul class="practice-list">
+      ${gaps.map((g) => html`<li key=${g.key}>
+        <${RoleIcon} role=${g.role} size=${18} />
+        <div class="practice-txt">
+          <span>${g.text}</span>
+          <span class="muted tiny">Idée pour <b style=${{ color: g.player.color }}>${g.player.name}</b> en ${ROLE_LABEL[g.role]} (clic = ajouter en C) :</span>
+        </div>
+        <div class="practice-champs">
+          ${g.suggestions.map((id) => html`<${ChampIcon} key=${id} id=${id} size=${34} onClick=${() => add(g.player, id, g.role)}
+            title=${`Ajouter ${champ(id).name} au pool de ${g.player.name} (${ROLE_LABEL[g.role]})`} />`)}
+        </div>
+      </li>`)}
+    </ul>`}
+  </section>`;
+}
+
 function Coverage({ players }) {
   const best = (p, r) => Math.max(0, ...Object.values(p.pool || {}).map((roles) => roles?.[r] || 0));
   return html`<section aria-label="Couverture des rôles">
@@ -123,7 +177,7 @@ function Coverage({ players }) {
         </div>`;
       })}
     </div>
-    ${players.length < 5 && html`<p class="hint warn" style=${{ marginTop: '10px' }}><${Icon} name="alert" size=${14} /> Il faut au moins 5 titulaires pour proposer des compos (actuellement ${players.length}).</p>`}
+    ${players.length < 5 && html`<p class="hint warn" style=${{ marginTop: '10px' }}><${Icon} name="alert" size=${14} /> Il faut au moins 5 joueurs dispo pour proposer des compos (actuellement ${players.length}).</p>`}
   </section>`;
 }
 
@@ -296,3 +350,4 @@ function ImportModal({ player, ps, actions, onClose }) {
       </ul>`}
   <//>`;
 }
+

@@ -99,6 +99,25 @@ puis ouvre <http://localhost:8080>. (Ou l'extension *Live Server* de VS Code.)
 
 Les rôles habituels et le profil (AD/AP, frontline, engage) de chaque champion sont dans [`js/data.js`](js/data.js) : modifiez-les si vous n'êtes pas d'accord. Un nouveau champion sorti après coup est déduit automatiquement de ses tags Riot.
 
+### Onglet « Adversaires »
+- Colle les Riot ID de l'équipe adverse (visibles dans le lobby Clash), plusieurs d'un coup séparés par des virgules.
+- Pour chacun : rang, rôle principal, parties / winrate / KDA, ses champions les plus joués et ses **one-tricks**, avec un bouton pour bannir.
+- « À bannir en priorité » résume les plus grosses menaces. « Nouvel adversaire » vide la liste pour le match suivant.
+
+### Bans conseillés et ordre de draft
+- Onglet **Bans** du panneau de droite : les mains adverses + les champions qui contrent notre meilleure compo (winrates U.GG), avec la raison.
+- En haut de la colonne Draft, l'**étape en cours** suit l'ordre officiel (B1, R1, B2… puis R1-R2, B2-B3…) : « À nous de bannir : Maître Yi » ou « À nous de pick : Annie » avec un bouton pour le faire. La recherche passe toute seule sur la bonne catégorie.
+
+### Onglet « Historique »
+- En bas de la colonne Draft, **Victoire** / **Défaite** (double clic) enregistre la compo jouée et vide la draft.
+- L'onglet affiche le winrate global, le bilan de chaque joueur (et de ses champions), le bilan des compos gardées et la liste des parties.
+
+### Dispos, rang, champions à travailler, Discord
+- Sur chaque carte joueur : **Dispo / ? / Absent** pour le prochain Clash (un absent n'est pas pris dans les compos) et la date du prochain Clash en haut de l'onglet Joueurs.
+- Le **rang** (solo/duo, sinon flex) s'affiche sous le pseudo ; avec plusieurs comptes, le meilleur.
+- **Champions à travailler** : repère les trous (rôle sans choix solide, manque d'engage, de frontline ou d'AP) et propose des champions au joueur concerné (ceux qu'il joue déjà en classé ou faciles à prendre en main) ; un clic l'ajoute à son pool en C.
+- **Copier pour Discord** (sous la compo et sur chaque compo gardée) : la compo en texte, prête à coller.
+
 ### Divers
 - 🔔 **Activité** : historique des modifs de chacun (les changements de draft des autres s'affichent aussi en notification).
 - ⚙ **Réglages** : poids de l'équilibre, nombre d'options, **export / import** JSON (sauvegarde de l'équipe).
@@ -117,6 +136,8 @@ js/data.js            champions (Data Dragon) + rôles/profils + recherche
 js/optimizer.js       moteur de compos (recherche exhaustive avec élagage)
 js/stats.js           winrates et matchups (U.GG)
 js/playerstats.js     stats des joueurs par Riot ID (DeepLoL)
+js/insights.js        ordre de draft, bans conseillés, historique, champions à travailler, Discord
+js/scout.js · history.js   onglets Adversaires et Historique
 js/store.js           synchro Firebase / mode local
 js/actions.js         modifications + journal d'activité
 js/app.js             application (en-tête, onglets, modales)

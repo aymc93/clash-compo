@@ -926,6 +926,136 @@ select:hover { border-color: var(--line-3); }
   .input, .search input { font-size: 16px; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Repérage adverse, bans, ordre de draft, historique, dispos, rang
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* Rang */
+.rank { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font: 700 11px/1 var(--display); letter-spacing: 0.03em; white-space: nowrap; color: var(--rk, var(--text-2)); background: color-mix(in srgb, var(--rk, #8b95a7) 16%, transparent); border: 1px solid color-mix(in srgb, var(--rk, #8b95a7) 45%, transparent); }
+.rk-iron { --rk: #9a8f8a; } .rk-bronze { --rk: #c98a5a; } .rk-silver { --rk: #b9c4d2; } .rk-gold { --rk: #f0c35b; }
+.rk-platinum { --rk: #4fd1c5; } .rk-emerald { --rk: #3ddc97; } .rk-diamond { --rk: #7aa7ff; } .rk-master { --rk: #c77dff; }
+.rk-grandmaster { --rk: #ff6b81; } .rk-challenger { --rk: #ffd27f; }
+
+/* Disponibilité + date du Clash */
+.seg-dispo button { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.seg-dispo button.on.d-yes { color: #04261a; background: var(--green); box-shadow: none; }
+.seg-dispo button.on.d-maybe { color: #2a1a00; background: var(--amber); box-shadow: none; }
+.seg-dispo button.on.d-no { color: #fff; background: rgba(255, 79, 109, 0.75); box-shadow: none; }
+.clash-date { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 4px 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--line-2); background: rgba(13, 21, 38, 0.7); }
+.clash-date .input-sm { width: 150px; height: 30px; color-scheme: dark; }
+.clash-date > .small:last-child { padding-right: 8px; white-space: nowrap; }
+
+/* Champions à travailler */
+.practice { border: 1px solid var(--line); border-radius: 12px; background: rgba(13, 21, 38, 0.6); }
+.practice-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 13.5px; color: var(--text); }
+.practice-head .icon { color: var(--gold); }
+.practice-head .chev { margin-left: auto; color: var(--text-3); transition: transform 0.2s; }
+.practice-head .chev.open { transform: rotate(180deg); }
+.practice-list { list-style: none; margin: 0; padding: 0 14px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); gap: 8px; }
+.practice-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg-soft); border: 1px solid var(--line); }
+.practice-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.practice-champs { display: flex; gap: 8px; flex: none; }
+
+/* Étape de draft */
+.step-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-soft); }
+.step-card.is-ours { border-color: rgba(216, 180, 106, 0.55); background: linear-gradient(180deg, rgba(216, 180, 106, 0.1), var(--bg-soft)); }
+.step-card.is-done { border-color: rgba(61, 220, 151, 0.4); }
+.step-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.step-n { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.step-dots { display: flex; gap: 2px; }
+.step-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--line-2); }
+.step-dots span.done { background: var(--text-3); }
+.step-dots span.now { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+.step-title { font: 700 15px var(--display); letter-spacing: 0.03em; }
+.step-card.is-ours .step-title { color: var(--gold-2); }
+.step-sug { display: flex; align-items: center; gap: 10px; }
+.step-sug-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.step-sug-txt .tiny { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Fin de partie */
+.game-end { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.game-end > span { margin-right: auto; }
+.res-win { color: #8fe3b9; }
+.res-win:hover { color: #04261a; background: var(--green); border-color: var(--green); }
+.res-loss { color: #ff9aac; }
+.res-loss:hover { color: #fff; background: rgba(255, 79, 109, 0.75); border-color: var(--red); }
+
+/* Bans conseillés + boutons du héros */
+.bans { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ban-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--bg-soft); border: 1px solid var(--line); border-left: 3px solid var(--red); }
+.hero-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.tag-rec { color: var(--text); background: var(--surface-3); flex: none; text-transform: none; letter-spacing: 0; }
+.tag-ot { color: #2a0a10; background: #ff8da0; }
+
+/* Onglet Adversaires */
+.scout-view, .history-view { display: flex; flex-direction: column; gap: 20px; }
+.scout-form { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr) 90px auto; gap: 8px; padding: 12px; }
+.scout-form select { height: 42px; }
+.scout-form .btn { height: 42px; }
+.ban-strip h3, .hist-saved h3, .hist-games h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-2); margin-bottom: 10px; }
+.ban-strip h3 .icon { color: var(--red); }
+.ban-strip-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 8px; }
+.ban-chip { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(13, 21, 38, 0.7); border: 1px solid var(--line); border-left: 3px solid var(--red); }
+.ban-chip-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.ban-chip-txt .tiny { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scout-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 48px 20px; border: 1.5px dashed var(--line-2); border-radius: 14px; }
+.scout-empty p { max-width: 560px; line-height: 1.55; }
+.scout-empty .icon { color: var(--gold); }
+.scout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: clamp(12px, 1.2vw, 18px); }
+.scard { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--radius); background: linear-gradient(180deg, rgba(17, 27, 48, 0.95), rgba(13, 21, 38, 0.95)); border: 1px solid var(--line); box-shadow: 0 2px 0 var(--side-red) inset; }
+.scard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.scard-id { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.scard-id a { font-size: 15px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scard-id a:hover b { text-decoration: underline; text-underline-offset: 2px; }
+.scard-id .rank { align-self: flex-start; }
+.scard-stats { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.scard-champs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.scard-champs li { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 28px; align-items: center; gap: 10px; padding: 3px 0; }
+.scard-champs li.is-gone { opacity: 0.5; }
+.sc-cname { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; font-size: 13.5px; line-height: 1.25; }
+.sc-cname small { width: 100%; font-size: 11px; }
+.sc-cstat { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.sc-cstat b { font: 700 13px var(--display); }
+.sc-ban { color: #ff8da0; }
+.sc-ban:hover { color: #fff; background: rgba(255, 79, 109, 0.6); }
+.sc-gone { text-align: center; }
+.scard-msg { margin: 0; }
+.scard-foot { margin-top: auto; }
+
+/* Onglet Historique */
+.hist-summary { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; }
+.hist-total { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 18px; border-radius: 14px; background: rgba(13, 21, 38, 0.7); border: 1px solid var(--line); }
+.hist-wr { font: 700 44px/1 var(--display); }
+.hist-players { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.hist-player { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: rgba(13, 21, 38, 0.7); border: 1px solid var(--line); box-shadow: 0 2px 0 var(--pc) inset; }
+.hp-head { display: flex; align-items: center; gap: 8px; }
+.hp-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hp-wr { font: 700 15px var(--display); white-space: nowrap; }
+.hp-champs { display: flex; gap: 10px; flex-wrap: wrap; padding-bottom: 4px; }
+.hist-saved-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.hist-saved-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; background: rgba(13, 21, 38, 0.7); border: 1px solid var(--line); }
+.hist-saved-item > b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.games { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.game { display: grid; grid-template-columns: 170px auto 24px minmax(0, 1fr) 32px; align-items: center; gap: 14px; padding: 8px 12px; border-radius: 10px; background: rgba(13, 21, 38, 0.7); border: 1px solid var(--line); border-left: 3px solid var(--res); }
+.game.is-win { --res: var(--green); }
+.game.is-loss { --res: var(--red); }
+.game-res { display: flex; flex-direction: column; line-height: 1.3; }
+.game-res b { color: var(--res); font-family: var(--display); letter-spacing: 0.04em; text-transform: uppercase; font-size: 14px; }
+.game-team { display: flex; gap: 10px; min-width: 0; }
+.game-slot { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 64px; min-width: 0; }
+.game-slot .tiny { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.game-enemy { display: flex; gap: 6px; }
+.game-vs { text-align: center; }
+
+@media (max-width: 1500px) {
+  .tab .icon { display: none; }
+  .tab { padding: 0 12px; }
+}
+@media (max-width: 1100px) {
+  .scout-form { grid-template-columns: 1fr 1fr; }
+  .hist-summary { grid-template-columns: 1fr; }
+  .game { grid-template-columns: 1fr; }
+}
+
 /* ── Très grands écrans : on agrandit l'interface pour garder des textes lisibles ── */
 @media (min-width: 2200px) {
   .app { zoom: 1.2; height: calc(100dvh / 1.2); }
