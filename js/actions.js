@@ -42,7 +42,8 @@ export function makeActions(store, ctx) {
       const color = freeColor();
       const riotId = parseRiotId(name);
       if (riotId) name = riotId.name;
-      store.set(`players/${id}`, { name, color, order: Date.now(), active: true, ...(riotId ? { riot: { ...riotId, platform: DEFAULT_PLATFORM } } : {}) });
+      const accounts = riotId ? { [uid('a')]: { ...riotId, platform: DEFAULT_PLATFORM, order: Date.now() } } : null;
+      store.set(`players/${id}`, { name, color, order: Date.now(), active: true, ...(accounts ? { accounts } : {}) });
       if (self) store.log({ by: name, color, cid: store.deviceId, text: 'a rejoint l’équipe', kind: 'join' });
       else log(`a ajouté ${name} à l’équipe`);
       return { id, color, name };
@@ -54,7 +55,7 @@ export function makeActions(store, ctx) {
     },
     removePlayer(pid) {
       const name = pName(pid);
-      const updates = { [`players/${pid}`]: null };
+      const updates = { [`players/${pid}`]: null, [`accstats/${pid}`]: null, [`pstats/${pid}`]: null };
       slotValues(S().draft?.ourPicks).forEach((v, i) => {
         if (v?.player === pid) updates[`draft/ourPicks/${i}/player`] = null;
       });
@@ -65,14 +66,27 @@ export function makeActions(store, ctx) {
       store.set(`players/${pid}/active`, active);
       log(active ? `a remis ${pName(pid)} titulaire` : `a mis ${pName(pid)} remplaçant`);
     },
-    /** Compte Riot du joueur ({ name, tag, platform } ou null) : ses stats seront chargées. */
-    setRiotId(pid, riot) {
-      store.update({ [`players/${pid}/riot`]: riot || null, [`pstats/${pid}`]: null });
-      log(riot ? `a lié ${pName(pid)} au compte ${riot.name}#${riot.tag}` : `a retiré le compte Riot de ${pName(pid)}`);
+    /** Ajoute un compte Riot ({ name, tag, platform }) au joueur : ses stats seront chargées et cumulées. */
+    addAccount(pid, riot) {
+      const aid = uid('a');
+      store.update({ [`players/${pid}/accounts/${aid}`]: { ...riot, order: Date.now() }, [`pstats/${pid}`]: null });
+      log(`a ajouté le compte ${riot.name}#${riot.tag} à ${pName(pid)}`);
+      return aid;
     },
-    /** Stats téléchargées (pas de ligne dans le journal : c'est automatique). */
-    storePlayerStats(pid, data) {
-      store.set(`pstats/${pid}`, data);
+    /** Retire un compte (aid = 'main' pour l'ancien compte unique). */
+    removeAccount(pid, aid) {
+      const p = S().players?.[pid];
+      const acc = aid === 'main' ? p?.riot : p?.accounts?.[aid];
+      store.update({
+        [aid === 'main' ? `players/${pid}/riot` : `players/${pid}/accounts/${aid}`]: null,
+        [`accstats/${pid}/${aid}`]: null,
+        [`pstats/${pid}`]: null,
+      });
+      log(`a retiré le compte ${acc ? `${acc.name}#${acc.tag}` : 'Riot'} de ${pName(pid)}`);
+    },
+    /** Stats téléchargées d'un compte (pas de ligne dans le journal : c'est automatique). */
+    storeAccountStats(pid, aid, data) {
+      store.set(`accstats/${pid}/${aid}`, data);
     },
     setForcedRole(pid, role) {
       store.set(`players/${pid}/forcedRole`, role || null);

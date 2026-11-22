@@ -22,6 +22,48 @@ export function parseRiotId(text) {
 }
 export const riotKey = (riot) => (riot ? `${riot.name}#${riot.tag}|${riot.platform || DEFAULT_PLATFORM}`.toLowerCase() : '');
 
+/**
+ * Comptes Riot d'un joueur (un joueur peut en avoir plusieurs : main, smurf…).
+ * → [{ id, name, tag, platform }] ; l'ancien champ unique `riot` devient le compte « main ».
+ */
+export function accountsOf(p) {
+  const list = Object.entries(p?.accounts || {})
+    .filter(([, a]) => a?.name && a?.tag)
+    .map(([id, a]) => ({ id, name: a.name, tag: a.tag, platform: a.platform || DEFAULT_PLATFORM, order: a.order || 0 }))
+    .sort((a, b) => a.order - b.order);
+  if (p?.riot?.name && p.riot.tag) list.unshift({ id: 'main', name: p.riot.name, tag: p.riot.tag, platform: p.riot.platform || DEFAULT_PLATFORM, order: 0 });
+  return list;
+}
+
+/** Fusionne deux lignes compactes (moyennes pondérées par le nombre de parties). */
+function mergeRow(a, b) {
+  if (!a) return b ? b.slice() : a;
+  if (!b) return a.slice();
+  const g = a[0] + b[0];
+  const avg = (i) => (g ? Math.round(((a[i] * a[0] + b[i] * b[0]) / g) * 100) / 100 : 0);
+  return [g, a[1] + b[1], avg(2), avg(3), avg(4), avg(5), avg(6)];
+}
+
+/** Stats cumulées de plusieurs comptes (même format qu'un compte seul, + `accounts`). */
+export function mergeStats(list) {
+  const valid = list.filter(Boolean);
+  if (!valid.length) return null;
+  if (valid.length === 1) return { ...valid[0], accounts: 1 };
+  const out = { season: valid[0].season, ts: Math.min(...valid.map((s) => s.ts || 0)), total: null, roles: {}, champs: {}, accounts: valid.length };
+  for (const s of valid) {
+    out.total = mergeRow(out.total, s.total);
+    for (const [role, r] of Object.entries(s.roles || {})) {
+      const cur = out.roles[role] || [0, 0];
+      out.roles[role] = [cur[0] + r[0], cur[1] + r[1]];
+    }
+    for (const [id, byRole] of Object.entries(s.champs || {})) {
+      const dst = out.champs[id] || (out.champs[id] = {});
+      for (const [role, r] of Object.entries(byRole)) dst[role] = mergeRow(dst[role], r);
+    }
+  }
+  return out;
+}
+
 /** Lien vers le profil DeepLoL (pour mettre à jour les stats sur leur site). */
 export function profileUrl(riot) {
   const slug = (PLATFORMS.find((p) => p[0] === (riot.platform || DEFAULT_PLATFORM)) || PLATFORMS[0])[2];

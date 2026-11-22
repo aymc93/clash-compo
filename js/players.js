@@ -1,9 +1,9 @@
 // Onglet « Joueurs » : pseudos, pools de champions par rôle, couverture des rôles.
-import { html, useEffect, useState } from './vendor.js';
+import { html, useEffect, useRef, useState } from './vendor.js';
 import { cx, plural, timeAgo } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, TIER_NAME, champ, centeredUrl, splashUrl } from './data.js';
 import { pct, wrClass } from './stats.js';
-import { DEFAULT_PLATFORM, PLATFORMS, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, topChamps, unpack } from './playerstats.js';
+import { DEFAULT_PLATFORM, PLATFORMS, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, riotKey, topChamps, unpack } from './playerstats.js';
 import { Avatar, ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, Switch, TierPicker, TierPill, toast } from './ui.js';
 
 const byTier = (a, b) => b.tier - a.tier || champ(a.id).name.localeCompare(champ(b.id).name, 'fr');
@@ -26,7 +26,7 @@ export function PlayersView({ players, actions, meId, onlineIds, unavailable, on
     <div class="player-grid">
       ${players.map((p) => html`<${PlayerCard} key=${p.id} p=${p} actions=${actions} isMe=${p.id === meId}
         online=${onlineIds.has(p.id)} unavailable=${unavailable} onAdd=${onAdd} onEdit=${onEdit}
-        ps=${pstats.statsOf(p)} psStatus=${pstats.statusOf(p)} onRefresh=${() => pstats.refresh(p)} onImport=${() => setImporting(p.id)} />`)}
+        ps=${pstats.statsOf(p)} accounts=${pstats.accountsStatus(p)} onRefresh=${() => pstats.refresh(p)} onImport=${() => setImporting(p.id)} />`)}
       <button type="button" class="pcard pcard-add" onClick=${onAddPlayer}>
         <${Icon} name="userPlus" size=${26} />
         <span>Ajouter un joueur</span>
@@ -49,7 +49,7 @@ function TierLegend() {
   </div>`;
 }
 
-function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, psStatus, onRefresh, onImport }) {
+function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, accounts, onRefresh, onImport }) {
   const pool = p.pool || {};
   const count = Object.keys(pool).length;
   const rows = ROLES.map((r) => ({
@@ -78,7 +78,7 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
       </div>
     </header>
 
-    <${RiotPanel} p=${p} ps=${ps} status=${psStatus} actions=${actions} onRefresh=${onRefresh} onImport=${onImport} />
+    <${RiotPanel} p=${p} ps=${ps} accounts=${accounts} actions=${actions} onRefresh=${onRefresh} onImport=${onImport} />
 
     <div class="pcard-roles">
       ${rows.map(({ r, list }) => html`<div class=${cx('role-row', p.forcedRole === r && 'is-forced')} key=${r}>
@@ -184,70 +184,95 @@ export function PoolEditor({ open, player, champId, onClose, actions }) {
 
 const statLine = (st) => `${plural(st.games, 'partie')} · ${pct(st.wr, 0)} · KDA ${kdaTxt(st.kda)}`;
 
-/** Compte Riot du joueur + résumé de ses stats de la saison. */
-function RiotPanel({ p, ps, status, actions, onRefresh, onImport }) {
-  const [editing, setEditing] = useState(false);
+/** Comptes Riot du joueur (plusieurs possibles) + résumé de ses stats cumulées de la saison. */
+function RiotPanel({ p, ps, accounts, actions, onRefresh, onImport }) {
+  const [adding, setAdding] = useState(false);
   const [text, setText] = useState('');
-  const [platform, setPlatform] = useState(p.riot?.platform || DEFAULT_PLATFORM);
-  useEffect(() => {
-    if (!editing) { setText(p.riot ? `${p.riot.name}#${p.riot.tag}` : ''); setPlatform(p.riot?.platform || DEFAULT_PLATFORM); }
-  }, [editing, p.riot?.name, p.riot?.tag, p.riot?.platform]);
+  const [platform, setPlatform] = useState(DEFAULT_PLATFORM);
   const parsed = parseRiotId(text);
+  const showForm = adding || accounts.length === 0;
+  const inputRef = useRef(null);
+  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
   const submit = (e) => {
     e.preventDefault();
-    if (!text.trim()) { if (p.riot) actions.setRiotId(p.id, null); setEditing(false); return; }
     if (!parsed) { toast({ text: 'Format attendu : Pseudo#TAG (ex. Faker#KR1)', type: 'warn' }); return; }
-    actions.setRiotId(p.id, { ...parsed, platform });
-    setEditing(false);
+    if (accounts.some((a) => riotKey(a.acc) === riotKey({ ...parsed, platform }))) {
+      toast({ text: 'Ce compte est déjà lié à ce joueur.', type: 'warn' });
+      return;
+    }
+    actions.addAccount(p.id, { ...parsed, platform });
+    setText('');
+    setAdding(false);
   };
-
-  if (!p.riot || editing) {
-    return html`<form class="riot-form" onSubmit=${submit}>
-      <label class="riot-input">
-        <input class="input input-sm" value=${text} placeholder="Riot ID : Pseudo#TAG" maxlength="24" spellcheck="false" autocomplete="off"
-          aria-label=${`Riot ID de ${p.name}`} onInput=${(e) => setText(e.currentTarget.value)}
-          onKeyDown=${(e) => { if (e.key === 'Escape') setEditing(false); }} />
-      </label>
-      <select class="mini-select" value=${platform} onChange=${(e) => setPlatform(e.currentTarget.value)} aria-label="Région du compte">
-        ${PLATFORMS.map(([v, label]) => html`<option value=${v}>${label}</option>`)}
-      </select>
-      <button type="submit" class="btn btn-ghost btn-sm" disabled=${!!text.trim() && !parsed}>${p.riot && !text.trim() ? 'Retirer' : 'Lier'}</button>
-      ${editing && html`<button type="button" class="icon-btn icon-btn-sm" onClick=${() => setEditing(false)} aria-label="Annuler"><${Icon} name="x" size=${14} /></button>`}
-    </form>`;
-  }
-
+  const loading = accounts.some((a) => a.status === 'loading');
   const total = ps ? unpack(ps.total) : null;
   const main = ps ? mainRole(ps) : null;
-  return html`<div class=${cx('riot-panel', status.status === 'error' && 'is-error')}>
-    <div class="riot-head">
-      <button type="button" class="riot-id" onClick=${() => setEditing(true)} title="Modifier le Riot ID">
-        <b>${p.riot.name}</b><span class="muted">#${p.riot.tag}</span>
-        <${Icon} name="edit" size=${12} />
-      </button>
+  const region = (pf) => (pf === DEFAULT_PLATFORM ? '' : ` · ${(PLATFORMS.find((x) => x[0] === pf) || [, pf])[1]}`);
+
+  return html`<div class="riot-panel">
+    ${accounts.length > 0 && html`<div class="riot-head">
+      <span class="riot-title">${accounts.length > 1 ? `${accounts.length} comptes Riot` : 'Compte Riot'}</span>
       <div class="riot-actions">
         ${ps && html`<span class="muted tiny" title=${`Saison ${ps.season} · stats mises à jour ${timeAgo(ps.ts)}`}>${timeAgo(ps.ts)}</span>`}
-        <button type="button" class=${cx('icon-btn icon-btn-sm', status.status === 'loading' && 'is-spinning')} onClick=${onRefresh}
-          disabled=${status.status === 'loading'} title="Recharger les stats" aria-label="Recharger les stats">
+        <button type="button" class=${cx('icon-btn icon-btn-sm', loading && 'is-spinning')} onClick=${onRefresh}
+          disabled=${loading} title="Recharger les stats de tous ses comptes" aria-label="Recharger les stats">
           <${Icon} name="refresh" size=${14} />
         </button>
-        <a class="icon-btn icon-btn-sm" href=${profileUrl(p.riot)} target="_blank" rel="noopener" title="Voir le profil sur DeepLoL" aria-label="Profil DeepLoL">
-          <${Icon} name="link" size=${14} />
-        </a>
       </div>
-    </div>
-    ${status.status === 'loading' && !ps && html`<p class="muted tiny riot-msg">Chargement des stats…</p>`}
-    ${status.status === 'error' && html`<p class="riot-msg warn tiny"><${Icon} name="alert" size=${13} /> ${status.message}
-      ${status.code === 'nodata' && html` <a href=${profileUrl(p.riot)} target="_blank" rel="noopener">Ouvre le profil sur DeepLoL</a>, clique sur « Mettre à jour », puis recharge ici.`}</p>`}
-    ${total && html`<div class="riot-stats">
-      <span class="rs"><b>${total.games}</b><small>parties</small></span>
-      <span class="rs"><b class=${wrClass(total.wr)}>${pct(total.wr, 0)}</b><small>winrate</small></span>
-      <span class="rs" title=${`${kdaTxt(total.k)} / ${kdaTxt(total.d)} / ${kdaTxt(total.a)} en moyenne`}><b>${kdaTxt(total.kda)}</b><small>KDA</small></span>
-      <span class="rs"><b>${kdaTxt(total.cs)}</b><small>CS/min</small></span>
-      ${main && html`<span class="rs"><b class="rs-role"><${RoleIcon} role=${main.role} size=${14} />${ROLE_LABEL[main.role]}</b><small>${pct(main.share, 0)} des parties</small></span>`}
-    </div>
-    <button type="button" class="btn btn-ghost btn-xs riot-import" onClick=${onImport} title="Ajouter ses champions les plus joués au pool">
-      <${Icon} name="download" size=${13} /> Importer ses champions
-    </button>`}
+    </div>`}
+
+    ${accounts.length > 0 && html`<ul class="acc-list">
+      ${accounts.map(({ acc, status, ps: aps, message, code }) => {
+        const t = aps ? unpack(aps.total) : null;
+        return html`<li key=${acc.id} class=${cx('acc', status === 'error' && 'is-error')}>
+          <div class="acc-row">
+            <a class="acc-id" href=${profileUrl(acc)} target="_blank" rel="noopener" title="Voir le profil sur DeepLoL">
+              <b>${acc.name}</b><span class="muted">#${acc.tag}${region(acc.platform)}</span>
+            </a>
+            <span class="acc-stat">
+              ${status === 'loading' && !t && html`<span class="muted">chargement…</span>`}
+              ${status === 'error' && html`<span class="warn" title=${message}><${Icon} name="alert" size=${13} /> ${code === 'notfound' ? 'introuvable' : code === 'nodata' ? 'aucune partie' : 'erreur'}</span>`}
+              ${t && status !== 'error' && html`<b>${t.games}</b> p. · <b class=${wrClass(t.wr)}>${pct(t.wr, 0)}</b>`}
+            </span>
+            <${ConfirmButton} class="icon-btn icon-btn-sm" onConfirm=${() => actions.removeAccount(p.id, acc.id)}
+              confirmLabel=${html`<${Icon} name="check" size=${13} />`} title=${`Retirer le compte ${acc.name}#${acc.tag}`}>
+              <${Icon} name="x" size=${13} />
+            <//>
+          </div>
+          ${status === 'error' && html`<p class="riot-msg warn tiny">${message}
+            ${code === 'nodata' && html` <a href=${profileUrl(acc)} target="_blank" rel="noopener">Ouvre le profil sur DeepLoL</a>, clique sur « Mettre à jour », puis recharge ici.`}</p>`}
+        </li>`;
+      })}
+    </ul>`}
+
+    ${showForm
+      ? html`<form class="riot-form" onSubmit=${submit}>
+          <label class="riot-input">
+            <input ref=${inputRef} class="input input-sm" value=${text} placeholder=${accounts.length ? 'Autre compte : Pseudo#TAG' : 'Riot ID : Pseudo#TAG'} maxlength="24"
+              spellcheck="false" autocomplete="off" aria-label=${`Ajouter un compte Riot à ${p.name}`}
+              onInput=${(e) => setText(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Escape') { setText(''); setAdding(false); } }} />
+          </label>
+          <select class="mini-select" value=${platform} onChange=${(e) => setPlatform(e.currentTarget.value)} aria-label="Région du compte">
+            ${PLATFORMS.map(([v, label]) => html`<option value=${v}>${label}</option>`)}
+          </select>
+          <button type="submit" class="btn btn-ghost btn-sm" disabled=${!parsed}>Lier</button>
+          ${accounts.length > 0 && html`<button type="button" class="icon-btn icon-btn-sm" onClick=${() => { setText(''); setAdding(false); }} aria-label="Annuler"><${Icon} name="x" size=${14} /></button>`}
+        </form>`
+      : html`<button type="button" class="link-btn acc-add" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${13} /> Ajouter un compte (smurf…)</button>`}
+
+    ${total && html`<div class="riot-sum">
+      ${ps.accounts > 1 && html`<span class="riot-sum-label">Total des ${ps.accounts} comptes</span>`}
+      <div class="riot-stats">
+        <span class="rs"><b>${total.games}</b><small>parties</small></span>
+        <span class="rs"><b class=${wrClass(total.wr)}>${pct(total.wr, 0)}</b><small>winrate</small></span>
+        <span class="rs" title=${`${kdaTxt(total.k)} / ${kdaTxt(total.d)} / ${kdaTxt(total.a)} en moyenne`}><b>${kdaTxt(total.kda)}</b><small>KDA</small></span>
+        <span class="rs"><b>${kdaTxt(total.cs)}</b><small>CS/min</small></span>
+        ${main && html`<span class="rs"><b class="rs-role"><${RoleIcon} role=${main.role} size=${14} />${ROLE_LABEL[main.role]}</b><small>${pct(main.share, 0)} des parties</small></span>`}
+      </div>
+      <button type="button" class="btn btn-ghost btn-xs riot-import" onClick=${onImport} title="Ajouter ses champions les plus joués au pool (tous comptes confondus)">
+        <${Icon} name="download" size=${13} /> Importer ses champions
+      </button>
+    </div>`}
   </div>`;
 }
 
@@ -263,7 +288,7 @@ function ImportModal({ player, ps, actions, onClose }) {
     toast({ text: `${plural(items.length, 'champion')} ajouté${items.length > 1 ? 's' : ''} au pool de ${player.name}`, type: 'ok' });
   };
   return html`<${Modal} open=${true} onClose=${onClose} title=${`Champions de ${player.name}`}
-    subtitle=${`Parties classées de la saison. Le niveau proposé dépend du nombre de parties, du winrate et du KDA.`}
+    subtitle=${`Parties classées de la saison${ps.accounts > 1 ? `, ${ps.accounts} comptes cumulés` : ''}. Le niveau proposé dépend du nombre de parties, du winrate et du KDA.`}
     footer=${html`
       <button type="button" class="btn btn-ghost" onClick=${onClose}>Fermer</button>
       <button type="button" class="btn btn-gold" disabled=${!missing.length} onClick=${() => add(missing)}>

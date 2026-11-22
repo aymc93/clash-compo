@@ -10,51 +10,67 @@ import { PlayersView, PoolEditor } from './players.js';
 import { DraftBoard } from './draft.js';
 import { CompsView } from './comps.js';
 import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, matchup, matchupPoints } from './stats.js';
-import { STATS_TTL, fetchPlayerStats, riotKey } from './playerstats.js';
+import { STATS_TTL, accountsOf, fetchPlayerStats, mergeStats, riotKey } from './playerstats.js';
 
 /**
- * Stats DeepLoL des joueurs qui ont renseigné leur Riot ID.
- * Le résumé est enregistré dans l'équipe (pstats/{joueur}) : un seul membre le télécharge,
- * tout le monde le voit. Rafraîchi automatiquement au bout de STATS_TTL.
+ * Stats DeepLoL des joueurs, cumulées sur tous leurs comptes Riot.
+ * Chaque compte est enregistré dans l'équipe (accstats/{joueur}/{compte}) : un seul membre le
+ * télécharge, tout le monde le voit. Rafraîchi automatiquement au bout de STATS_TTL.
  */
-function usePlayerStats(players, pstats, actions, loaded) {
-  const [local, setLocal] = useState({}); // pid → { status: 'loading' | 'error', code, message, key }
+function usePlayerStats(players, accstats, actions, loaded) {
+  const [local, setLocal] = useState({}); // `${pid}/${aid}` → { status: 'loading' | 'error', code, message, key }
   const inflight = useRef(new Set());
-  const valid = (p) => {
-    const e = pstats?.[p.id];
-    return p.riot && e && e.key === riotKey(p.riot) ? e : null;
+  const merged = useRef(new Map()); // pid → { sig, value }
+  const entryOf = (p, acc) => {
+    const e = accstats?.[p.id]?.[acc.id];
+    return e && e.key === riotKey(acc) ? e : null;
   };
-  const load = (p, force = false) => {
-    const key = riotKey(p.riot);
-    if (inflight.current.has(key)) return;
-    if (!force && local[p.id]?.status === 'error' && local[p.id].key === key) return;
-    inflight.current.add(key);
-    setLocal((m) => ({ ...m, [p.id]: { status: 'loading', key } }));
-    fetchPlayerStats(p.riot).then(
+  const load = (p, acc, force = false) => {
+    const key = riotKey(acc);
+    const lk = `${p.id}/${acc.id}`;
+    if (inflight.current.has(lk)) return;
+    if (!force && local[lk]?.status === 'error' && local[lk].key === key) return;
+    inflight.current.add(lk);
+    setLocal((m) => ({ ...m, [lk]: { status: 'loading', key } }));
+    fetchPlayerStats(acc).then(
       (data) => {
-        actions.storePlayerStats(p.id, { ...data, key });
-        setLocal((m) => ({ ...m, [p.id]: null }));
+        actions.storeAccountStats(p.id, acc.id, { ...data, key });
+        setLocal((m) => ({ ...m, [lk]: null }));
       },
-      (err) => setLocal((m) => ({ ...m, [p.id]: { status: 'error', code: err.code || 'network', message: err.message, key } })),
-    ).finally(() => inflight.current.delete(key));
+      (err) => setLocal((m) => ({ ...m, [lk]: { status: 'error', code: err.code || 'network', message: err.message, key } })),
+    ).finally(() => inflight.current.delete(lk));
   };
   useEffect(() => {
     if (!loaded) return;
     for (const p of players) {
-      if (!p.riot) continue;
-      const e = valid(p);
-      if (!e || Date.now() - (e.ts || 0) > STATS_TTL) load(p);
+      for (const acc of accountsOf(p)) {
+        const e = entryOf(p, acc);
+        if (!e || Date.now() - (e.ts || 0) > STATS_TTL) load(p, acc);
+      }
     }
-  }, [loaded, players, pstats]);
+  }, [loaded, players, accstats]);
+
+  const accountStatus = (p, acc) => {
+    const l = local[`${p.id}/${acc.id}`];
+    const e = entryOf(p, acc);
+    if (l && l.key === riotKey(acc) && (l.status === 'error' || !e)) return { ...l, ps: e };
+    return e ? { status: 'ok', ps: e } : { status: 'loading' };
+  };
   return {
-    statsOf: (p) => valid(p),
-    statusOf: (p) => {
-      if (!p.riot) return { status: 'none' };
-      const l = local[p.id];
-      if (l && l.key === riotKey(p.riot)) return l;
-      return valid(p) ? { status: 'ok' } : { status: 'loading' };
+    /** Stats cumulées de tous les comptes du joueur (ou null). */
+    statsOf: (p) => {
+      const list = accountsOf(p).map((acc) => entryOf(p, acc)).filter(Boolean);
+      if (!list.length) return null;
+      const sig = list.map((e) => `${e.key}@${e.ts}`).join(',');
+      const hit = merged.current.get(p.id);
+      if (hit && hit.sig === sig) return hit.value;
+      const value = mergeStats(list);
+      merged.current.set(p.id, { sig, value });
+      return value;
     },
-    refresh: (p) => p.riot && load(p, true),
+    /** État de chaque compte : [{ acc, status, ps, message, code }]. */
+    accountsStatus: (p) => accountsOf(p).map((acc) => ({ acc, ...accountStatus(p, acc) })),
+    refresh: (p) => accountsOf(p).forEach((acc) => load(p, acc, true)),
   };
 }
 
@@ -187,14 +203,13 @@ export function App({ store, room }) {
   const muKey = Object.entries(enemyByRole).map(([r, e]) => `${r}:${e.champ}:${e.stats.status}`).join(',');
 
   // Stats des joueurs (Riot ID) et mode de calcul des compos.
-  const pstats = state.pstats || {};
-  const pstatsApi = usePlayerStats(players, pstats, actions, snap.loaded);
+  const pstatsApi = usePlayerStats(players, state.accstats || {}, actions, snap.loaded);
   const [compMode, setCompModeRaw] = useState(() => lsGet('cc.compMode', 'tiers'));
   const setCompMode = (m) => { setCompModeRaw(m); lsSet('cc.compMode', m); setSelectedKey(null); };
   const statsMode = compMode === 'stats';
   const withStats = active.filter((p) => pstatsApi.statsOf(p)).length;
   const statsFn = statsMode ? pstatsApi.statsOf : null;
-  const pstatsKey = active.map((p) => { const e = pstatsApi.statsOf(p); return e ? `${p.id}:${e.ts}` : ''; }).join(',');
+  const pstatsKey = active.map((p) => { const e = pstatsApi.statsOf(p); return e ? `${p.id}:${e.ts}:${e.accounts}:${e.total?.[0]}` : ''; }).join(',');
 
   const engineKey = JSON.stringify([
     active.map((p) => [p.id, p.name, p.color, p.pool || {}, p.forcedRole || null]),

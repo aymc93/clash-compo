@@ -64,7 +64,7 @@ puis ouvre <http://localhost:8080>. (Ou l'extension *Live Server* de VS Code.)
 - **Ajouter un joueur** (remplaçants compris). L'interrupteur *Titulaire / Remplaçant* indique qui joue ce Clash : le moteur choisit les 5 meilleurs titulaires.
 - Le **+** de chaque ligne (Top, Jungle, Mid, ADC, Support) ajoute des champions à ce rôle. Le niveau ajouté se choisit en haut du sélecteur.
 - Clic sur un champion → niveau **par rôle** (ex. Sett top **S** et support **B**), ou retrait du pool.
-- **Riot ID** (`Pseudo#TAG` + région) : les stats classées de la saison s'affichent sur la carte du joueur (parties, winrate, KDA, CS/min, rôle principal) et un petit badge donne son winrate sur chaque champion de son pool.
+- **Riot ID** (`Pseudo#TAG` + région) : on peut en lier **plusieurs par joueur** (main, smurfs, autre région) avec « Ajouter un compte », leurs stats sont **cumulées**. Les stats classées de la saison s'affichent sur la carte du joueur (parties, winrate, KDA, CS/min, rôle principal) et un petit badge donne son winrate sur chaque champion de son pool.
   **Importer ses champions** ajoute d'un coup ses champions les plus joués, au bon rôle, avec un niveau proposé d'après ses stats.
   On peut aussi taper directement `Pseudo#TAG` dans « Ajouter un joueur ».
   Source : DeepLoL (données publiques de leur site, pas une API officielle). Les stats sont enregistrées dans l'équipe et rechargées toutes les 6 h. Si un compte n'a « aucune partie », ouvre son profil DeepLoL (bouton lien), clique sur *Mettre à jour*, puis recharge.

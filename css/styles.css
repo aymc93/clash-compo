@@ -878,3 +878,25 @@ select:hover { border-color: var(--line-3); }
   .mode-bar .seg { width: 100%; }
   .mode-bar .seg button { flex: 1; justify-content: center; font-size: 12px; padding: 0 8px; }
 }
+
+/* Plusieurs comptes Riot par joueur */
+.riot-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.acc-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.acc { padding: 3px 4px 3px 8px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+.acc.is-error { border-color: rgba(247, 184, 75, 0.45); }
+.acc-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.acc-id { display: inline-flex; align-items: baseline; gap: 1px; min-width: 0; flex: 1; font-size: 13px; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.acc-id:hover b { text-decoration: underline; text-underline-offset: 2px; }
+.acc-stat { flex: none; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.acc-stat b { font: 700 13px var(--display); color: var(--text); }
+.acc-stat b.wr-good, .acc-stat b.wr-ok { color: #3ddc97; }
+.acc-stat b.wr-meh { color: #ffb37a; }
+.acc-stat b.wr-bad { color: #ff6b81; }
+.acc-stat .warn { display: inline-flex; align-items: center; gap: 4px; color: #ffcf7d; }
+.acc .riot-msg { margin: 2px 0 4px; }
+.riot-panel .riot-form { margin: 8px 0 0; }
+.acc-add { display: inline-flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 12px; text-decoration: none; }
+.acc-add:hover { text-decoration: underline; }
+.riot-sum { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.riot-sum .riot-stats { margin-top: 4px; }
+.riot-sum-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gold); }
