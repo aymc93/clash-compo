@@ -1,13 +1,14 @@
 // Résultats : colonne centrale (compo recommandée + autres options) et panneau latéral
 // (priorités de pick, matchups, compos gardées).
-import { html, useState } from './vendor.js';
+import { html, useEffect, useState } from './vendor.js';
 import { cx, lsGet, lsSet, plural, signed } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, champ, iconUrl, loadingUrl, splashUrl } from './data.js';
 import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
 import { ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, TierPill, toast } from './ui.js';
 import { kdaTxt } from './playerstats.js';
-import { copyText, discordText, recordTxt } from './insights.js';
+import { SAFETY_LABEL, TIMING_LABEL, copyText, discordText, recordTxt } from './insights.js';
+import { compImage, shareImage } from './share.js';
 import { GameEnd } from './draft.js';
 
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
@@ -15,7 +16,7 @@ const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 
 const compSig = (slots) => ROLES.map((r) => `${slots[r]?.champ}:${slots[r]?.player}`).join('|');
 
 /** Rend deux colonnes : la compo (centre) et le panneau latéral. */
-export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0, bans = [], records = {}, teamName = 'Mon équipe', onRecord }) {
+export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0, bans = [], records = {}, teamName = 'Mon équipe', onRecord, plan = null, flex = [], safetyOf = () => null, votesOf = null }) {
   const comps = result.comps;
   const [showAll, setShowAll] = useState(false);
   const savedSigs = new Map(saved.map(({ item }) => [compSig(item.slots || {}), item.name]));
@@ -29,7 +30,7 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
     </div>
     ${current
       ? html`
-        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} teamName=${teamName} onRecord=${onRecord}
+        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} teamName=${teamName} onRecord=${onRecord} votes=${votesOf ? votesOf(current) : null}
           mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
         ${comps.length > 1 && html`<div class="options">
           <div class="options-head">
@@ -39,7 +40,7 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
           </div>
           <div class="options-list">
             ${comps.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
-              weight=${weight} onClick=${() => onSelect(i)} />`)}
+              weight=${weight} onClick=${() => onSelect(i)} votes=${votesOf ? votesOf(c) : null} />`)}
           </div>
         </div>`}
         ${showAll && html`<${Modal} open=${true} onClose=${() => setShowAll(false)} title="Toutes les options" size="lg"
@@ -53,18 +54,19 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
   </section>`;
 
   return [center, html`<${SidePanel} key="side" priority=${current ? priority : []} weight=${weight} saved=${saved} actions=${actions}
-    enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} hasComp=${!!current} bans=${bans} records=${records} teamName=${teamName} />`];
+    enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} hasComp=${!!current} bans=${bans} records=${records} teamName=${teamName}
+    plan=${plan} flex=${flex} safetyOf=${safetyOf} />`];
 }
 
 /** Panneau latéral à onglets : une seule chose à la fois. */
-function SidePanel({ priority, weight, saved, actions, enemies, players, unavailable, muRaw, hasComp, bans, records, teamName }) {
+function SidePanel({ priority, weight, saved, actions, enemies, players, unavailable, muRaw, hasComp, bans, records, teamName, plan, flex, safetyOf }) {
   const muCount = enemies.filter((e) => e?.role).length;
   const [tab, setTabRaw] = useState(() => lsGet('cc.sideTab', 'prio'));
   const setTab = (t) => { setTabRaw(t); lsSet('cc.sideTab', t); };
   const tabs = [
     ['bans', 'Bans', null, 'Bans conseillés : mains et one-tricks adverses (onglet Adversaires) et champions qui contrent notre meilleure compo.'],
     ['prio', 'Priorités', null, 'Ce que la meilleure compo perd si l’adversaire ban ou prend ce champion : pick tôt ceux du haut.'],
-    ['mu', 'Matchups', muCount || null, 'Notre winrate contre chaque pick adverse, dans sa lane, avec les champions de nos pools.'],
+    ['mu', 'Analyse', muCount || null, 'Profil de leur compo et de la nôtre, plan de jeu, et nos meilleurs matchups contre chaque pick adverse.'],
     ['saved', 'Gardées', saved.length || null, 'Compos validées par l’équipe. Pendant la draft, une compo devient « cassée » si un de ses champions est banni ou pris.'],
   ];
   return html`<aside class="col col-side" aria-label="Infos de draft">
@@ -76,9 +78,10 @@ function SidePanel({ priority, weight, saved, actions, enemies, players, unavail
     <div class="side-body">
       ${tab === 'bans' && html`<${BanPanel} bans=${bans} actions=${actions} />`}
       ${tab === 'prio' && (hasComp
-        ? html`<${PriorityPanel} items=${priority} weight=${weight} />`
+        ? html`<${PriorityPanel} items=${priority} weight=${weight} safetyOf=${safetyOf} flex=${flex} />`
         : html`<p class="side-empty muted small">Les priorités de pick apparaissent dès qu’une compo est possible.</p>`)}
-      ${tab === 'mu' && html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`}
+      ${tab === 'mu' && html`<${AnalysisPanel} plan=${plan} />
+        <${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`}
       ${tab === 'saved' && html`<${SavedPanel} saved=${saved} actions=${actions} records=${records} teamName=${teamName} />`}
     </div>
   </aside>`;
@@ -133,7 +136,7 @@ function ModeSwitch({ mode, onMode, withStats, total, onGoPlayers }) {
   </div>`;
 }
 
-function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName, teamName, onRecord }) {
+function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName, teamName, onRecord, votes }) {
   const r = rating(comp.score, weight);
   const bal = comp.balance;
   const stats = mode === 'stats';
@@ -142,8 +145,21 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
     const ok = await copyText(discordText({ title: `Compo Clash — ${teamName}`, rating: r, slots }));
     if (ok) toast({ text: 'Compo copiée : colle-la sur Discord (Ctrl+V).', type: 'ok' });
   };
+  const [imgBusy, setImgBusy] = useState(false);
+  const image = async () => {
+    setImgBusy(true);
+    try {
+      const slots = Object.fromEntries(comp.slots.map((s) => [s.role, { champ: s.champ, name: s.player.name, color: s.player.color }]));
+      const blob = await compImage({ slots, title: `Compo Clash — ${teamName}`, subtitle: bal.warnings.length ? '' : 'Compo équilibrée', rating: r });
+      const how = await shareImage(blob, `compo-${teamName.replace(/\W+/g, '-').toLowerCase()}.png`);
+      toast({ text: how === 'copied' ? 'Image copiée : colle-la sur Discord (Ctrl+V).' : 'Image téléchargée.', type: 'ok' });
+    } catch {
+      toast({ text: 'Impossible de créer l’image.', type: 'warn' });
+    }
+    setImgBusy(false);
+  };
   const keep = () => {
-    actions.saveComp(comp, mode);
+    actions.saveComp(comp, mode, r);
     toast({ text: 'Compo validée : elle est gardée dans « Compos enregistrées » pour toute l’équipe.', type: 'ok' });
   };
   const scoreTip = [
@@ -156,7 +172,13 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
       <div class="hero-chips"><${BalanceChips} b=${bal} />
         ${comp.bench.length > 0 && html`<span class="chip-stat" title="Pas dans cette compo"><${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b></span>`}
       </div>
-      <div class=${cx('score', scoreClass(r))} title=${scoreTip}><b>${r}</b><span>/100</span></div>
+      <div class="hero-right">
+        ${votes && html`<div class="votes" role="group" aria-label="Votes de l’équipe">
+          <button type="button" class=${cx('vote', votes.mine > 0 && 'on up')} onClick=${() => actions.vote(votes.slots, votes.mine > 0 ? 0 : 1)} title="J’aime cette compo">👍 <b>${votes.up}</b></button>
+          <button type="button" class=${cx('vote', votes.mine < 0 && 'on down')} onClick=${() => actions.vote(votes.slots, votes.mine < 0 ? 0 : -1)} title="Je n’aime pas cette compo">👎 <b>${votes.down}</b></button>
+        </div>`}
+        <div class=${cx('score', scoreClass(r))} title=${scoreTip}><b>${r}</b><span>/100</span></div>
+      </div>
     </header>
     <div class="hero-slots">
       ${comp.slots.map((s, ri) => html`<${SlotCard} key=${s.role + s.champ} slot=${s} alts=${alternatives(result, comp, ri)} stats=${stats}
@@ -166,7 +188,10 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
       <${GameEnd} onRecord=${onRecord} canRecord=${true} />
       <div class="hero-actions">
       <button type="button" class="btn btn-ghost" onClick=${share} title="Copier la compo en texte, prêt à coller sur Discord">
-        <${Icon} name="link" size=${15} /> Copier pour Discord
+        <${Icon} name="link" size=${15} /> Texte
+      </button>
+      <button type="button" class="btn btn-ghost" onClick=${image} disabled=${imgBusy} title="Image de la compo (copiée, ou téléchargée)">
+        <${Icon} name="download" size=${15} /> Image
       </button>
       ${savedName
         ? html`<span class="kept"><${Icon} name="check" size=${16} /> Compo gardée · <b>${savedName}</b></span>`
@@ -236,13 +261,14 @@ function BalanceChips({ b }) {
     </span>`;
 }
 
-function CompMini({ comp, rank, active, best, weight, onClick }) {
+function CompMini({ comp, rank, active, best, weight, onClick, votes }) {
   const r = rating(comp.score, weight);
   const delta = rating(comp.score, weight) - rating(best, weight);
   return html`<button type="button" class=${cx('mini', active && 'is-active')} onClick=${onClick} aria-pressed=${active}>
     <div class="mini-head">
       <span class="mini-rank">#${rank + 1}</span>
       <span class=${cx('mini-score', scoreClass(r))}>${r}</span>
+      ${votes && votes.up - votes.down !== 0 && html`<span class=${cx('mini-votes', votes.up - votes.down > 0 ? 'pos' : 'neg')} title=${`${votes.up} 👍 · ${votes.down} 👎`}>${votes.up - votes.down > 0 ? '👍' : '👎'}${Math.abs(votes.up - votes.down)}</span>`}
       ${rank > 0 && html`<span class="mini-delta">${delta === 0 ? '=' : signed(delta)}</span>`}
     </div>
     <div class="mini-slots">
@@ -301,7 +327,7 @@ function MatchupPanel({ enemies, players, unavailable, muRaw }) {
   </div>`;
 }
 
-function PriorityPanel({ items }) {
+function PriorityPanel({ items, safetyOf = () => null, flex = [] }) {
   const level = (it) => (it.points === Infinity || it.points >= 6 ? 'high' : it.points >= 3 ? 'mid' : 'low');
   const levelTxt = { high: 'À sécuriser', mid: 'Important', low: 'Remplaçable' };
   return html`<div class="side-list">
@@ -315,6 +341,14 @@ function PriorityPanel({ items }) {
             <div class="prio-txt">
               <b>${champ(it.champ).name}</b>
               <span class="muted tiny">${it.player.name} · ${ROLE_LABEL[it.role]}${it.replacement ? html` · sinon <b>${champ(it.replacement.champ).name}</b>` : ''}</span>
+              ${(() => {
+                const sf = safetyOf(it.champ, it.role);
+                const isFlex = flex.some((f) => f.champ === it.champ);
+                return (sf || isFlex) && html`<span class="prio-tags">
+                  ${sf && html`<span class=${cx('tag', `tag-${sf.level}`)} title=${sf.counters.length ? `Contres : ${sf.counters.map((c) => `${champ(c.opp).name} ${Math.round(c.wr * 100)} %`).join(', ')}` : 'Pas de vrai contre'}>${SAFETY_LABEL[sf.level]}</span>`}
+                  ${isFlex && html`<span class="tag tag-flex" title="Jouable à plusieurs postes : le pick tôt cache nos rôles">Flex</span>`}
+                </span>`;
+              })()}
             </div>
             <div class="prio-right">
               <span class="prio-loss">${it.points === Infinity ? 'Critique' : it.points === 0 ? '±0' : `−${it.points}`}</span>
@@ -322,6 +356,31 @@ function PriorityPanel({ items }) {
             </div>
           </li>`)}
         </ol>`}
+    ${flex.length > 0 && html`<div class="flex-block">
+      <h4 title="Champions que l’équipe peut jouer à plusieurs postes : les pick tôt cache nos rôles à l’adversaire.">Flex picks</h4>
+      <div class="flex-list">
+        ${flex.slice(0, 8).map((f) => html`<${ChampIcon} key=${f.champ} id=${f.champ} size=${32}
+          title=${`${champ(f.champ).name} : ${f.roles.map((r) => ROLE_LABEL[r]).join(' / ')} (${f.who.join(', ')})`} />`)}
+      </div>
+    </div>`}
+  </div>`;
+}
+
+/** Profil des deux compos et conseils de jeu. */
+function AnalysisPanel({ plan }) {
+  if (!plan || (!plan.us.n && !plan.them.n)) return null;
+  const Row = ({ label, p, side }) => (p.n ? html`<div class=${cx('an-row', side)}>
+    <b>${label}</b>
+    <div class="an-chips">
+      ${p.timing && html`<span class="chip-stat">${TIMING_LABEL[p.timing]}</span>`}
+      ${p.styles.map((x) => html`<span class="chip-stat">${x}</span>`)}
+      <span class="chip-stat">${Math.round(p.ad * 10) / 10} AD · ${Math.round(p.ap * 10) / 10} AP</span>
+    </div>
+  </div>` : null);
+  return html`<div class="analysis">
+    <${Row} label="Nous" p=${plan.us} side="us" />
+    <${Row} label=${`Eux (${plan.them.n}/5)`} p=${plan.them} side="them" />
+    ${plan.tips.length > 0 && html`<ul class="tips">${plan.tips.map((t) => html`<li>${t}</li>`)}</ul>`}
   </div>`;
 }
 
@@ -358,7 +417,7 @@ function SavedPanel({ saved, actions, records = {}, teamName }) {
             ${records[id] && html`<span class="tag tag-rec" title="Bilan en partie">${recordTxt(records[id])}</span>`}
             <span class=${cx('saved-status', ev.ok ? scoreClass(ev.rating) : 'ko')}>${ev.ok ? `${ev.rating}/100` : 'Cassée'}</span>
             <button type="button" class="icon-btn icon-btn-sm" title="Copier pour Discord" aria-label="Copier pour Discord"
-              onClick=${async () => { if (await copyText(discordText({ title: `${item.name} — ${teamName}`, rating: ev.ok ? ev.rating : null, slots: item.slots || {} }))) toast({ text: 'Compo copiée pour Discord.', type: 'ok' }); }}>
+              onClick=${async () => { if (await copyText(discordText({ title: `${item.name} — ${teamName}`, rating: ev.ok ? ev.rating : null, slots: item.slots || {}, note: item.note ? `📝 ${item.note}` : '' }))) toast({ text: 'Compo copiée pour Discord.', type: 'ok' }); }}>
               <${Icon} name="link" size=${13} />
             </button>
             <${ConfirmButton} class="icon-btn icon-btn-sm" onConfirm=${() => actions.removeSaved(id)} confirmLabel=${html`<${Icon} name="check" size=${14} />`} title="Supprimer">
@@ -373,7 +432,29 @@ function SavedPanel({ saved, actions, records = {}, teamName }) {
             })}
           </div>
           ${!ev.ok && html`<p class="saved-why"><${Icon} name="alert" size=${13} /> ${ev.reasons.join(' · ')}</p>`}
+          <${NoteField} value=${item.note || ''} onCommit=${(v) => actions.setSavedNote(id, v)} />
         </li>`)}
       </ul>`}
+  </div>`;
+}
+
+/** Plan de jeu d'une compo gardée (texte libre, partagé). */
+function NoteField({ value, onCommit }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  useEffect(() => { if (!editing) setText(value); }, [value, editing]);
+  if (!editing) {
+    return value
+      ? html`<button type="button" class="note-view" onClick=${() => setEditing(true)} title="Modifier le plan de jeu">📝 ${value}</button>`
+      : html`<button type="button" class="link-btn note-add" onClick=${() => setEditing(true)}>+ Plan de jeu</button>`;
+  }
+  const commit = () => { setEditing(false); if (text.trim() !== value) onCommit(text.trim()); };
+  return html`<div class="note-edit">
+    <textarea class="input note-input" rows="3" maxlength="400" value=${text} placeholder="Ex. : on joue autour du drake, Annie flash-ult sur leur ADC…"
+      ref=${(el) => el && el !== document.activeElement && !el.dataset.f && (el.dataset.f = '1', el.focus())}
+      onInput=${(e) => setText(e.currentTarget.value)}
+      onBlur=${(e) => { if (!e.relatedTarget?.classList?.contains('note-ok')) commit(); }}
+      onKeyDown=${(e) => { if (e.key === 'Escape') { setText(value); setEditing(false); } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commit(); }} />
+    <button type="button" class="btn btn-ghost btn-xs note-ok" onClick=${commit}>OK</button>
   </div>`;
 }

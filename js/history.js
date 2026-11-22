@@ -10,7 +10,7 @@ const wrCls = (r) => { const x = wr(r); return x >= 60 ? 'wr-good' : x >= 50 ? '
 const dateTxt = (ts) => new Date(ts).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 
 /** games : [{ id, ...partie }] (récentes d'abord) ; stats : historyStats(games) ; players : tous les joueurs */
-export function HistoryView({ games, stats, players, saved, actions, onGoDraft }) {
+export function HistoryView({ games, stats, players, saved, actions, onGoDraft, tournament = {}, opponent = '' }) {
   const total = { w: stats.wins, l: stats.losses };
   const nameOf = (pid, fallback) => players.find((p) => p.id === pid)?.name || fallback || 'Ancien joueur';
   const colorOf = (pid) => players.find((p) => p.id === pid)?.color || 'var(--text-3)';
@@ -19,9 +19,11 @@ export function HistoryView({ games, stats, players, saved, actions, onGoDraft }
     .map(({ id, item }) => ({ id, item, r: stats.bySig[compSignature(item.slots)] }))
     .filter((x) => x.r);
 
+  const cup = html`<${Tournament} t=${tournament} actions=${actions} opponent=${opponent} />`;
   if (!games.length) {
     return html`<div class="history-view">
       <div class="view-head"><div><h1>Historique</h1><p class="muted">Le bilan de vos parties de Clash.</p></div></div>
+      ${cup}
       <div class="scout-empty muted">
         <${Icon} name="crown" size=${28} />
         <p>Aucune partie notée. À la fin d’une partie, clique sur <b>Victoire</b> ou <b>Défaite</b> en bas de la colonne Draft : la compo jouée est enregistrée ici, avec le bilan de chaque joueur et de chaque compo.</p>
@@ -32,6 +34,7 @@ export function HistoryView({ games, stats, players, saved, actions, onGoDraft }
 
   return html`<div class="history-view">
     <div class="view-head"><div><h1>Historique</h1><p class="muted">Le bilan de vos parties de Clash.</p></div></div>
+    ${cup}
 
     <section class="hist-summary">
       <div class="hist-total">
@@ -93,3 +96,35 @@ export function HistoryView({ games, stats, players, saved, actions, onGoDraft }
   </div>`;
 }
 
+/** Tournoi Clash en cours : rounds, adversaires et résultats. */
+function Tournament({ t, actions, opponent }) {
+  const rounds = Object.entries(t.rounds || {}).sort((a, b) => (a[1].n || 0) - (b[1].n || 0));
+  const w = rounds.filter(([, r]) => r.result === 'win').length;
+  const l = rounds.filter(([, r]) => r.result === 'loss').length;
+  const cycle = (r) => (r.result === 'win' ? 'loss' : r.result === 'loss' ? null : 'win');
+  return html`<section class="cup">
+    <div class="cup-head">
+      <${Icon} name="crown" size=${18} />
+      <input class="inline-input cup-name" value=${t.name || ''} placeholder="Nom du tournoi (ex. Clash de Bilgewater)" maxlength="40"
+        onChange=${(e) => actions.setTournamentName(e.currentTarget.value.trim())} aria-label="Nom du tournoi" />
+      ${rounds.length > 0 && html`<span class="cup-score"><b class="wr-good">${w}V</b> · <b class="wr-bad">${l}D</b></span>`}
+      <button type="button" class="btn btn-ghost btn-sm" onClick=${() => actions.addRound(opponent || '')} title=${opponent ? `Adversaire : ${opponent} (onglet Adversaires)` : ''}>
+        <${Icon} name="plus" size=${14} /> Round
+      </button>
+      ${rounds.length > 0 && html`<${ConfirmButton} class="btn btn-ghost btn-sm" onConfirm=${actions.resetTournament} confirmLabel="Nouveau tournoi ?" title="Effacer les rounds">Nouveau</${ConfirmButton}>`}
+    </div>
+    ${rounds.length === 0
+      ? html`<p class="muted small">Ajoute un round par match du Clash. Le résultat se remplit tout seul quand tu notes Victoire ou Défaite sous la compo.</p>`
+      : html`<ol class="rounds">
+        ${rounds.map(([rid, r]) => html`<li key=${rid} class=${cx('round', r.result === 'win' && 'is-win', r.result === 'loss' && 'is-loss', !r.result && 'is-live')}>
+          <span class="round-n">R${r.n}</span>
+          <input class="inline-input round-opp" value=${r.opponent || ''} placeholder="Adversaire" maxlength="32"
+            onChange=${(e) => actions.setRound(rid, { opponent: e.currentTarget.value.trim() })} aria-label=${`Adversaire du round ${r.n}`} />
+          <button type="button" class="round-res" onClick=${() => actions.setRound(rid, { result: cycle(r) })} title="Cliquer pour changer le résultat">
+            ${r.result === 'win' ? 'Victoire' : r.result === 'loss' ? 'Défaite' : 'En cours'}
+          </button>
+          <button type="button" class="icon-btn icon-btn-sm" onClick=${() => actions.removeRound(rid)} aria-label="Retirer ce round"><${Icon} name="x" size=${13} /></button>
+        </li>`)}
+      </ol>`}
+  </section>`;
+}

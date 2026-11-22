@@ -4,7 +4,8 @@ import { lsGet, lsSet, uid } from './util.js';
 import { loadChampions } from './data.js';
 import { createStore } from './store.js';
 import { firebaseConfig } from '../config.js';
-import { App } from './app.js';
+import { App, CodeGate } from './app.js';
+import { checkCode, isProtected, savedCode } from './protect.js';
 
 const ROOM_RE = /^[A-Za-z0-9_-]{3,64}$/;
 
@@ -30,12 +31,32 @@ function showFatal(message) {
   }
 }
 
+/** Équipe protégée : retrouve l'adresse des données avec le code enregistré, sinon le demande. */
+async function resolveDataPath(room, root) {
+  const base = firebaseConfig?.databaseURL;
+  if (!base) return room;
+  let locked = false;
+  try { locked = await isProtected(base, room); } catch { return room; }
+  if (!locked) return room;
+  const remembered = savedCode(room);
+  if (remembered) {
+    const path = await checkCode(base, room, remembered).catch(() => null);
+    if (path) return path;
+  }
+  await loadChampions().catch(() => {});
+  return new Promise((resolve) => {
+    root.textContent = '';
+    render(html`<${CodeGate} room=${room} onOk=${(path) => { render(null, root); resolve(path); }} />`, root);
+  });
+}
+
 async function start() {
   const room = resolveRoom();
-  const [, store] = await Promise.all([loadChampions(), createStore({ roomId: room, firebaseConfig })]);
   const root = document.getElementById('app');
+  const dataPath = await resolveDataPath(room, root);
+  const [, store] = await Promise.all([loadChampions(), createStore({ roomId: dataPath, firebaseConfig })]);
   root.textContent = '';
-  render(html`<${App} store=${store} room=${room} />`, root);
+  render(html`<${App} store=${store} room=${room} secured=${dataPath !== room} />`, root);
 }
 
 start().catch((err) => {

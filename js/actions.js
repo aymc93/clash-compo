@@ -3,6 +3,7 @@
 import { champ, ROLES, ROLE_LABEL, TIER_LETTER } from './data.js';
 import { uid } from './util.js';
 import { DEFAULT_PLATFORM, parseRiotId } from './playerstats.js';
+import { compSignature, discordText } from './insights.js';
 
 export const PLAYER_COLORS = [
   '#f5b942', '#3ddc97', '#4c9dff', '#ff6b9a', '#a78bfa',
@@ -20,6 +21,27 @@ export const slotValues = (group) => [0, 1, 2, 3, 4].map((i) => group?.[i] ?? nu
  * @param store  store de synchro
  * @param ctx    ref dont `.current` = { state, me: { name, color, playerId } }
  */
+/** Webhook Discord valide ? */
+export const isWebhook = (url) => /^https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(String(url || '').trim());
+
+/** Envoie un message dans le salon Discord relié (silencieux en cas d'échec, renvoie true/false). */
+export async function postDiscord(url, content) {
+  if (!isWebhook(url)) return false;
+  try {
+    const res = await fetch(url.trim(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: String(content).slice(0, 1900), username: 'Clash Compo' }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Clé Firebase d'une compo (pour les votes). */
+export const voteKey = (slots) => compSignature(slots).replace(/[.#$\[\]\/]/g, '_');
+
 export function makeActions(store, ctx) {
   const S = () => ctx.current.state || {};
   const me = () => ctx.current.me || { name: 'Quelqu’un', color: '#8b95a7' };
@@ -181,7 +203,7 @@ export function makeActions(store, ctx) {
 
     // ── Compos enregistrées ───────────────────────────────────────────────
     /** Garde une compo proposée (mode 'stats' = proposée d'après les stats des joueurs). */
-    saveComp(comp, mode = 'tiers') {
+    saveComp(comp, mode = 'tiers', rating = null) {
       const count = Object.keys(S().saved || {}).length;
       const id = uid('s');
       const slots = {};
@@ -189,7 +211,15 @@ export function makeActions(store, ctx) {
       const name = `${mode === 'stats' ? 'Compo stats' : 'Compo'} ${count + 1}`;
       store.set(`saved/${id}`, { name, slots, by: me().name, ts: Date.now(), mode });
       log(`a validé et gardé « ${name} » (${ROLES.map((r) => cName(slots[r].champ)).join(', ')})`);
+      const hook = S().settings?.discordWebhook;
+      if (hook && S().settings?.discordAuto !== false) {
+        postDiscord(hook, discordText({ title: `✅ ${me().name} a validé « ${name} » — ${S().meta?.name || 'Mon équipe'}`, rating, slots }));
+      }
       return id;
+    },
+    setSavedNote(id, note) {
+      store.set(`saved/${id}/note`, note || null);
+      log(`a modifié le plan de jeu de « ${S().saved?.[id]?.name || 'une compo'} »`, 'edit', `note:${id}`);
     },
     renameSaved(id, name) {
       const old = S().saved?.[id]?.name;
@@ -251,13 +281,58 @@ export function makeActions(store, ctx) {
     /** Enregistre une partie : { win, slots: { role: { champ, player, name } }, enemy: [{ champ, role }], opponent, mode } */
     recordGame(game) {
       const id = uid('g');
-      store.set(`games/${id}`, { ...game, ts: Date.now(), by: me().name });
+      const updates = { [`games/${id}`]: { ...game, ts: Date.now(), by: me().name } };
+      // Round du tournoi en cours : on y reporte le résultat.
+      const rounds = Object.entries(S().tournament?.rounds || {}).sort((x, y) => (x[1].n || 0) - (y[1].n || 0));
+      const cur = rounds.find(([, r]) => !r.result);
+      if (cur) {
+        updates[`tournament/rounds/${cur[0]}/result`] = game.win ? 'win' : 'loss';
+        updates[`tournament/rounds/${cur[0]}/game`] = id;
+        if (!cur[1].opponent && game.opponent) updates[`tournament/rounds/${cur[0]}/opponent`] = game.opponent;
+      }
+      store.update(updates);
+      const hook = S().settings?.discordWebhook;
+      if (hook && S().settings?.discordAuto !== false) {
+        const head = `${game.win ? '🏆 Victoire' : '💀 Défaite'}${game.opponent ? ` contre ${game.opponent}` : ''} — ${S().meta?.name || 'Mon équipe'}`;
+        postDiscord(hook, discordText({ title: head, slots: game.slots }));
+      }
       log(`a noté une ${game.win ? 'victoire' : 'défaite'}${game.opponent ? ` contre ${game.opponent}` : ''}`, 'draft');
       return id;
     },
     removeGame(id) {
       store.set(`games/${id}`, null);
       log('a supprimé une partie de l’historique');
+    },
+
+    // ── Votes sur les compos proposées ────────────────────────────────────
+    /** value : 1 (pour), -1 (contre) ou 0 (retirer son vote). */
+    vote(slots, value) {
+      const voter = me().playerId || store.deviceId;
+      store.set(`votes/${voteKey(slots)}/${voter}`, value || null);
+    },
+
+    // ── Tournoi Clash ─────────────────────────────────────────────────────
+    setTournamentName(name) {
+      store.set('tournament/name', name || null);
+      log(`a nommé le tournoi « ${name} »`, 'edit', 'tournament-name');
+    },
+    addRound(opponent) {
+      const rounds = Object.values(S().tournament?.rounds || {});
+      const n = rounds.reduce((m, r) => Math.max(m, r.n || 0), 0) + 1;
+      store.set(`tournament/rounds/${uid('r')}`, { n, opponent: opponent || null, ts: Date.now() });
+      log(`a ajouté le round ${n} du tournoi${opponent ? ` contre ${opponent}` : ''}`);
+    },
+    setRound(rid, patch) {
+      const updates = {};
+      for (const [k, v] of Object.entries(patch)) updates[`tournament/rounds/${rid}/${k}`] = v ?? null;
+      store.update(updates);
+    },
+    removeRound(rid) {
+      store.set(`tournament/rounds/${rid}`, null);
+    },
+    resetTournament() {
+      store.set('tournament', null);
+      log('a commencé un nouveau tournoi');
     },
 
     // ── Réglages ──────────────────────────────────────────────────────────

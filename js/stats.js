@@ -137,3 +137,40 @@ export function matchupPoints(m, weight = 1) {
 
 export const pct = (x, digits = 1) => `${(x * 100).toLocaleString('fr-FR', { minimumFractionDigits: digits, maximumFractionDigits: digits })} %`;
 export const wrClass = (x) => (x >= 0.53 ? 'wr-good' : x >= 0.505 ? 'wr-ok' : x > 0.495 ? 'wr-even' : x > 0.47 ? 'wr-meh' : 'wr-bad');
+
+// ── Méta du patch (tier list U.GG : winrate et taux de pick par rôle) ─────
+const META_RANK = { 8: 'overall', 10: 'platinum_plus', 17: 'emerald_plus', 11: 'diamond_plus' };
+const META_REGION = { 12: 'world', 2: 'euw1' };
+const META_ROLE = { top: 'top', jungle: 'jungle', mid: 'mid', adc: 'adc', supp: 'support' };
+const metaCache = new Map();
+/** → { patch, roles: { role: [{ champ, wins, games, pick }] } } */
+export function loadMeta({ rank = DEFAULT_STATS.rank, region = DEFAULT_STATS.region } = {}) {
+  const ck = `${region}|${rank}`;
+  if (!metaCache.has(ck)) {
+    const p = (async () => {
+      const list = await patches();
+      for (const patch of list.slice(0, 2)) {
+        try {
+          const res = await fetch(`${BASE}/champion_ranking/${META_REGION[region] || 'world'}/${patch}/ranked_solo_5x5/${META_RANK[rank] || 'emerald_plus'}/1.5.0.json`);
+          if (!res.ok) continue;
+          const raw = await res.json();
+          const total = raw?.[3] || 0;
+          const roles = {};
+          for (const [k, rows] of Object.entries(raw?.[0] || {})) {
+            const role = META_ROLE[k];
+            if (!role || !Array.isArray(rows)) continue;
+            roles[role] = rows
+              .map((r) => ({ champ: champByKey(r[0])?.id, wins: r[2] || 0, games: r[3] || 0 }))
+              .filter((x) => x.champ && x.games)
+              .map((x) => ({ ...x, pick: total ? x.games / total : 0 }));
+          }
+          if (Object.keys(roles).length) return { patch: patch.replace('_', '.'), roles };
+        } catch { /* patch suivant */ }
+      }
+      throw new Error('méta indisponible');
+    })();
+    p.catch(() => metaCache.delete(ck));
+    metaCache.set(ck, p);
+  }
+  return metaCache.get(ck);
+}

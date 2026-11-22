@@ -67,7 +67,7 @@ export function scoutTop(ps, n = 5) {
  * - unavailable : champions déjà bannis / pris ; protect : champions qu'on veut jouer (pas de ban)
  * → [{ champ, score, reasons: [texte] }]
  */
-export function banSuggestions({ scouts = [], comp = null, counterOf = () => null, unavailable = new Set(), protect = new Set(), limit = 8 }) {
+export function banSuggestions({ scouts = [], comp = null, counterOf = () => null, unavailable = new Set(), protect = new Set(), limit = 8, meta = null }) {
   const acc = new Map();
   const add = (id, pts, reason) => {
     if (!id || unavailable.has(id) || protect.has(id) || pts <= 0) return;
@@ -93,6 +93,9 @@ export function banSuggestions({ scouts = [], comp = null, counterOf = () => nul
     for (const x of list) {
       add(x.opp, (x.wrS - 0.5) * 100 * 1.1, `Contre notre ${champ(slot.champ).name} (${ROLE_LABEL[slot.role]}) : ${Math.round(x.wr * 1000) / 10} %`.replace('.', ','));
     }
+  }
+  for (const x of metaTop(meta, 8)) {
+    add(x.champ, x.score * 0.6, `OP du patch en ${ROLE_LABEL[x.role]} : ${String(Math.round(x.wr * 1000) / 10).replace('.', ',')} %`);
   }
   return [...acc.values()]
     .map((e) => ({ ...e, reasons: e.reasons.sort((a, b) => b.pts - a.pts).map((r) => r.text) }))
@@ -141,7 +144,7 @@ const EASY = new Set([
  * Trous dans les pools des joueurs disponibles → [{ key, text, role, player, suggestions: [champId] }]
  * statsOf(player) → stats du joueur (ou null).
  */
-export function poolGaps(players, statsOf) {
+export function poolGaps(players, statsOf, meta = null) {
   const gaps = [];
   if (players.length < 2) return gaps;
   const tierIn = (p, id, r) => p.pool?.[id]?.[r] || 0;
@@ -157,7 +160,8 @@ export function poolGaps(players, statsOf) {
       .filter((c) => c.roles.includes(r) && !p.pool?.[c.id]?.[r] && need(c))
       .map((c) => {
         const played = champStats(ps, c.id, 'all')?.games || 0;
-        return { id: c.id, score: Math.min(played, 40) + (EASY.has(c.id) ? 12 : 0) };
+        const easy = EASY.has(c.id) || (c.info?.difficulty || 10) <= 3;
+        return { id: c.id, score: Math.min(played, 40) + (easy ? 12 : 0) + metaScore(meta, c.id, r) * 3 };
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 4)
@@ -214,4 +218,141 @@ export async function copyText(text) {
     window.prompt('Copie ce texte :', text);
     return false;
   }
+}
+
+// ── Profil d'une compo et plan de jeu ──────────────────────────────────────
+// Puissance selon le moment de la partie (repères généraux, à ajuster si besoin).
+const EARLY = new Set([
+  'Draven', 'LeeSin', 'Elise', 'Renekton', 'Pantheon', 'Lucian', 'Kalista', 'RekSai', 'XinZhao', 'Nidalee', 'Jayce',
+  'Kled', 'Olaf', 'Darius', 'Graves', 'Udyr', 'Taliyah', 'Leblanc', 'Talon', 'Qiyana', 'Rengar', 'Kindred', 'Shaco',
+  'Blitzcrank', 'Leona', 'Nautilus', 'Pyke', 'Rell', 'Alistar', 'Tristana', 'Samira', 'MissFortune', 'Caitlyn',
+  'JarvanIV', 'Trundle', 'Volibear', 'Warwick', 'Ivern', 'Sett', 'Irelia', 'Riven', 'Camille', 'Aatrox', 'Kennen',
+  'MonkeyKing', 'Zed', 'Sylas', 'Yone', 'Akali', 'Nocturne', 'Hecarim', 'Briar', 'Ambessa',
+]);
+const LATE = new Set([
+  'Kassadin', 'Kayle', 'Vayne', 'Jinx', 'KogMaw', 'Veigar', 'Nasus', 'Azir', 'Ryze', 'Smolder', 'AurelionSol',
+  'Cassiopeia', 'Senna', 'Jax', 'Gangplank', 'Viktor', 'Twitch', 'Aphelios', 'Zeri', 'MasterYi', 'Belveth', 'Ornn',
+  'Seraphine', 'Yuumi', 'Sona', 'Kayn', 'Karthus', 'Anivia', 'Orianna', 'Vladimir', 'Sion', 'Chogath', 'Mordekaiser',
+  'Gwen', 'Fiora', 'Yasuo', 'Hwei', 'Xerath', 'Ziggs', 'Jhin', 'Ezreal', 'Sivir', 'Xayah', 'Nilah', 'Mel', 'Aurora',
+]);
+const POKE = new Set([
+  'Xerath', 'Ziggs', 'Jayce', 'Varus', 'Ezreal', 'Zoe', 'Lux', 'Velkoz', 'Karma', 'Nidalee', 'Corki', 'Hwei',
+  'Caitlyn', 'Jhin', 'Kennen', 'Zyra', 'Brand', 'Seraphine', 'Mel', 'Senna', 'Syndra', 'Heimerdinger', 'Teemo', 'Smolder',
+]);
+
+/** Profil d'une liste de champions : dégâts, frontline, engage, poke, assassins, moment fort. */
+export function compProfile(ids) {
+  const list = ids.filter(Boolean).map((id) => champ(id));
+  let ad = 0, ap = 0, front = 0, engage = 0, poke = 0, assassins = 0, early = 0, late = 0;
+  for (const c of list) {
+    if (c.dmg === 'P') ad++; else if (c.dmg === 'M') ap++; else { ad += 0.5; ap += 0.5; }
+    if (c.front) front++;
+    if (c.engage) engage++;
+    if (POKE.has(c.id)) poke++;
+    if ((c.tags || []).includes('Assassin')) assassins++;
+    if (EARLY.has(c.id)) early++;
+    if (LATE.has(c.id)) late++;
+  }
+  const n = list.length;
+  const d = early - late;
+  const timing = !n ? null : d >= 2 ? 'early' : d <= -2 ? 'late' : d === 1 ? 'mid-early' : d === -1 ? 'mid-late' : 'mid';
+  const styles = [];
+  if (engage >= 2) styles.push('Engage');
+  if (poke >= 2) styles.push('Poke');
+  if (assassins >= 2) styles.push('Assassins');
+  if (front >= 2) styles.push('Frontline solide');
+  if (!styles.length && n >= 3) styles.push('Équilibrée');
+  return { n, ad, ap, front, engage, poke, assassins, early, late, timing, styles };
+}
+export const TIMING_LABEL = {
+  early: 'Fort en early', 'mid-early': 'Plutôt early', mid: 'Milieu de partie', 'mid-late': 'Plutôt late', late: 'Scale en late',
+};
+
+/** Conseils de jeu à partir de notre compo et de celle d'en face (picks connus). */
+export function gamePlan(ourIds, theirIds) {
+  const us = compProfile(ourIds);
+  const them = compProfile(theirIds);
+  const tips = [];
+  if (them.n >= 2) {
+    if (them.ad >= Math.max(3, them.n - 1)) tips.push('Ils sont quasi full AD : achetez de l’armure (bottes Ninja, Plaque du mort, Cœur gelé…).');
+    else if (them.ap >= Math.max(3, them.n - 1)) tips.push('Ils sont quasi full AP : résistance magique (Sandales de Mercure, Force de la nature…).');
+    if (them.engage >= 2) tips.push(`Beaucoup d’engage en face (${them.engage}) : restez groupés, gardez Flash et vos sorts de désengage.`);
+    if (them.poke >= 2) tips.push('Compo poke en face : ne subissez pas le siège, engagez vite ou contournez.');
+    if (them.assassins >= 2) tips.push('Plusieurs assassins en face : protégez vos carries, wardez les flancs, ne farmez pas seul.');
+    if (them.n >= 4 && them.front === 0) tips.push('Aucune frontline en face : plongez directement sur leurs carries.');
+  }
+  if (us.n >= 3) {
+    const ourScore = us.early - us.late;
+    const theirScore = them.n ? them.early - them.late : 0;
+    if (ourScore - theirScore >= 2) tips.push('Vous êtes plus forts en early : jouez les drakes et le Héraut, cherchez à finir avant 25-30 min.');
+    else if (theirScore - ourScore >= 2) tips.push('Eux sont plus forts en early : jouez safe, farmez, vous gagnez les fights tardifs.');
+    else if (us.late >= 3) tips.push('Votre compo scale bien : pas de prise de risque, le temps joue pour vous.');
+    if (us.front === 0) tips.push('Pas de frontline chez nous : jouez à distance, évitez les fights frontaux.');
+    if (us.engage === 0) tips.push('Pas d’engage chez nous : jouez la contre-attaque (on désengage puis on punit).');
+    if (us.poke >= 2) tips.push('Vous avez de la poke : affaiblissez-les avant chaque objectif, puis engagez.');
+  }
+  if (!tips.length && us.n >= 3) {
+    tips.push('Rapport de force équilibré : jouez autour de vos meilleurs matchups de lane (ci-dessous) et des objectifs neutres.');
+  }
+  return { us, them, tips: tips.slice(0, 6) };
+}
+
+// ── Flex picks et sécurité en blind ────────────────────────────────────────
+/** Champions de nos pools jouables à plusieurs postes (niveau B ou mieux). */
+export function flexPicks(players, unavailable = new Set()) {
+  const map = new Map();
+  for (const p of players) {
+    for (const [id, roles] of Object.entries(p.pool || {})) {
+      if (unavailable.has(id)) continue;
+      for (const [r, t] of Object.entries(roles || {})) {
+        if (!t || t < 2) continue;
+        const e = map.get(id) || { champ: id, roles: new Set(), who: new Set() };
+        e.roles.add(r);
+        e.who.add(p.name);
+        map.set(id, e);
+      }
+    }
+  }
+  return [...map.values()]
+    .filter((e) => e.roles.size >= 2)
+    .map((e) => ({ champ: e.champ, roles: ROLES.filter((r) => e.roles.has(r)), who: [...e.who] }))
+    .sort((a, b) => b.roles.length - a.roles.length || b.who.length - a.who.length);
+}
+
+/**
+ * Sécurité d'un pick en blind : nombre de vrais contres (U.GG) dans ce rôle.
+ * data = stats U.GG du champion → { level: 'safe' | 'ok' | 'risky', counters: [{ opp, wr }] } ou null.
+ */
+export function blindSafety(data, role) {
+  const vs = data?.roles?.[role]?.vs;
+  if (!vs) return null;
+  const counters = Object.entries(vs)
+    .map(([opp, [oppWins, games]]) => ({ opp, games, wrS: (oppWins + 30) / (games + 60), wr: games ? oppWins / games : 0 }))
+    .filter((x) => x.games >= 200 && x.wrS >= 0.54)
+    .sort((a, b) => b.wrS - a.wrS);
+  const hard = counters.filter((x) => x.wrS >= 0.565).length;
+  const level = counters.length <= 2 && !hard ? 'safe' : hard >= 3 || counters.length >= 6 ? 'risky' : 'ok';
+  return { level, counters: counters.slice(0, 3) };
+}
+export const SAFETY_LABEL = { safe: 'Blind sûr', ok: 'Blind possible', risky: 'Risqué en blind' };
+
+// ── Méta du patch ───────────────────────────────────────────────────────────
+/** Champions les plus forts du patch : meta = { role: [{ champ, wins, games, pick }] } → triés par force. */
+export function metaTop(meta, n = 8) {
+  const out = [];
+  for (const [role, list] of Object.entries(meta || {})) {
+    for (const x of list) {
+      if (x.pick < 0.02) continue; // champions vraiment joués à ce rôle
+      const wrS = (x.wins + 500) / (x.games + 1000);
+      out.push({ ...x, role, wr: x.games ? x.wins / x.games : 0, score: (wrS - 0.5) * 100 + Math.min(x.pick * 100, 10) * 0.18 });
+    }
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, n);
+}
+/** Force méta d'un champion à un rôle (0 si inconnu). */
+export function metaScore(meta, id, role) {
+  const x = (meta?.[role] || []).find((m) => m.champ === id);
+  if (!x || x.pick < 0.01) return 0;
+  const wrS = (x.wins + 500) / (x.games + 1000);
+  return Math.max(0, (wrS - 0.5) * 100 + Math.min(x.pick * 100, 10) * 0.18);
 }

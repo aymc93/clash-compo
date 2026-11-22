@@ -3,7 +3,7 @@ import { html, useEffect, useRef, useState } from './vendor.js';
 import { cx, plural, timeAgo } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, TIER_NAME, champ, centeredUrl, splashUrl } from './data.js';
 import { pct, wrClass } from './stats.js';
-import { DEFAULT_PLATFORM, PLATFORMS, bestRank, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, rankLabel, riotKey, tierClass, topChamps, unpack } from './playerstats.js';
+import { DEFAULT_PLATFORM, PLATFORMS, absoluteLp, bestRank, fetchLpHistory, champStats, kdaTxt, mainRole, parseRiotId, profileUrl, rankLabel, riotKey, tierClass, topChamps, unpack } from './playerstats.js';
 import { PRACTICE_TIER, poolGaps } from './insights.js';
 import { Avatar, ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, TierPicker, TierPill, toast } from './ui.js';
 
@@ -12,7 +12,7 @@ const byTier = (a, b) => b.tier - a.tier || champ(a.id).name.localeCompare(champ
 export const dispoOf = (p) => p.dispo || (p.active === false ? 'no' : 'yes');
 const DISPO = [['yes', 'Dispo', 'Disponible pour le prochain Clash'], ['maybe', '?', 'Peut-être disponible'], ['no', 'Absent', 'Absent : pas pris dans les compos']];
 
-export function PlayersView({ players, actions, meId, onlineIds, unavailable, onAdd, onEdit, onAddPlayer, pstats, clashDate }) {
+export function PlayersView({ players, actions, meId, onlineIds, unavailable, onAdd, onEdit, onAddPlayer, pstats, clashDate, meta }) {
   const active = players.filter((p) => dispoOf(p) !== 'no');
   const [importing, setImporting] = useState(null); // id du joueur
   const importPlayer = importing ? players.find((p) => p.id === importing) : null;
@@ -29,7 +29,7 @@ export function PlayersView({ players, actions, meId, onlineIds, unavailable, on
     </div>
 
     ${players.length > 0 && html`<${Coverage} players=${active} />`}
-    ${active.length >= 2 && html`<${Practice} players=${active} statsOf=${pstats.statsOf} actions=${actions} />`}
+    ${active.length >= 2 && html`<${Practice} players=${active} statsOf=${pstats.statsOf} actions=${actions} meta=${meta} />`}
 
     <div class="player-grid">
       ${players.map((p) => html`<${PlayerCard} key=${p.id} p=${p} actions=${actions} isMe=${p.id === meId}
@@ -132,9 +132,9 @@ function ClashDate({ date, players, actions }) {
 }
 
 /** Trous dans les pools + champions conseillés à travailler. */
-function Practice({ players, statsOf, actions }) {
+function Practice({ players, statsOf, actions, meta }) {
   const [open, setOpen] = useState(true);
-  const gaps = poolGaps(players, statsOf);
+  const gaps = poolGaps(players, statsOf, meta);
   if (!gaps.length) return null;
   const add = (p, id, role) => {
     actions.setTier(p.id, id, role, PRACTICE_TIER);
@@ -309,6 +309,7 @@ function RiotPanel({ p, ps, accounts, actions, onRefresh, onImport }) {
         <span class="rs"><b>${kdaTxt(total.cs)}</b><small>CS/min</small></span>
         ${main && html`<span class="rs"><b class="rs-role"><${RoleIcon} role=${main.role} size=${14} />${ROLE_LABEL[main.role]}</b><small>${pct(main.share, 0)} des parties</small></span>`}
       </div>
+      <${LpTrend} ps=${ps} />
       <button type="button" class="btn btn-ghost btn-xs riot-import" onClick=${onImport} title="Ajouter ses champions les plus joués au pool (tous comptes confondus)">
         <${Icon} name="download" size=${13} /> Importer ses champions
       </button>
@@ -362,3 +363,33 @@ function ImportModal({ player, ps, actions, onClose }) {
   <//>`;
 }
 
+/** Forme du joueur : courbe de LP en solo/duo sur les 30 derniers jours. */
+function LpTrend({ ps }) {
+  const [pts, setPts] = useState(null);
+  const puuid = ps?.puuid;
+  const platform = ps?.riot?.platform || DEFAULT_PLATFORM;
+  useEffect(() => {
+    if (!puuid) return undefined;
+    let alive = true;
+    fetchLpHistory(puuid, platform).then((h) => alive && setPts(h), () => alive && setPts([]));
+    return () => { alive = false; };
+  }, [puuid, platform]);
+  if (!pts || pts.length < 2) return null;
+  const recent = pts.filter((p) => p.t >= Date.now() - 30 * 86400000);
+  const list = recent.length >= 2 ? recent : pts.slice(-10);
+  const vals = list.map((p) => p.v);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const W = 120;
+  const H = 26;
+  const span = max - min || 1;
+  const path = list.map((p, i) => `${(i / (list.length - 1)) * W},${H - 2 - ((p.v - min) / span) * (H - 4)}`).join(' ');
+  const delta = vals[vals.length - 1] - vals[0];
+  const days = Math.max(1, Math.round((list[list.length - 1].t - list[0].t) / 86400000));
+  const cls = delta > 20 ? 'wr-good' : delta < -20 ? 'wr-bad' : 'wr-even';
+  return html`<div class="lp-trend" title=${`Évolution en solo/duo sur ${days} jours (${list.length} points)`}>
+    <svg width=${W} height=${H} viewBox=${`0 0 ${W} ${H}`} aria-hidden="true"><polyline points=${path} fill="none" stroke="currentColor" stroke-width="2" class=${cls} /></svg>
+    <span class=${cx('lp-delta', cls)}>${delta > 0 ? '+' : ''}${delta} LP</span>
+    <span class="muted tiny">${days} j</span>
+  </div>`;
+}

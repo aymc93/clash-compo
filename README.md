@@ -118,6 +118,31 @@ Les rôles habituels et le profil (AD/AP, frontline, engage) de chaque champion 
 - **Champions à travailler** : repère les trous (rôle sans choix solide, manque d'engage, de frontline ou d'AP) et propose des champions au joueur concerné (ceux qu'il joue déjà en classé ou faciles à prendre en main) ; un clic l'ajoute à son pool en C.
 - **Copier pour Discord** (sous la compo et sur chaque compo gardée) : la compo en texte, prête à coller.
 
+### Analyse de draft, méta et votes
+- Onglet **Analyse** (panneau de droite) : profil de notre compo et de la leur (early/late, engage, poke, assassins, AD/AP) et conseils de jeu (« ils sont full AD : armure », « vous êtes plus forts early : jouez les drakes »…), puis nos meilleurs matchups contre chaque pick adverse.
+- Onglet **Priorités** : chaque pick est marqué **Blind sûr / possible / risqué** (nombre de vrais contres d'après U.GG) et **Flex** s'il se joue à plusieurs postes ; la liste des flex picks de l'équipe est en dessous.
+- **Méta du patch** : les champions les plus forts du patch (U.GG, au moins 2 % de pick) entrent dans les bans conseillés et dans les idées de « Champions à travailler ».
+- **Votes** 👍 / 👎 sur chaque compo proposée (un vote par joueur, visible par tous).
+- **Plan de jeu** : une note libre sur chaque compo gardée (ajoutée au message Discord).
+
+### Forme, tournoi, Discord, image
+- Sur chaque carte joueur : la **courbe de LP** en solo/duo sur 30 jours (DeepLoL).
+- Onglet Historique : **suivi du tournoi Clash** (rounds, adversaires, résultats) ; le résultat du round en cours se remplit tout seul avec Victoire/Défaite.
+- ⚙ Réglages › **Discord** : colle un webhook de ton salon, les compos validées et les résultats y sont postés automatiquement.
+- Bouton **Image** sous la compo : une image PNG (splash arts + joueurs), copiée dans le presse-papiers ou téléchargée.
+
+### Équipe protégée par un code
+⚙ Réglages › **Accès à l'équipe** : choisis un code (6 caractères min.). Les données sont alors déplacées à une adresse calculée à partir du code : le lien seul ne suffit plus, il faut aussi le code (demandé une fois par appareil). Le code peut être changé ou retiré au même endroit.
+
+### Liaison avec le client LoL
+[`companion/lcu_bridge.py`](companion/lcu_bridge.py) (Python 3, sans installation) lit la sélection des champions dans le client LoL du PC et remplit la draft du site en direct (côté, bans, picks, et le joueur de chaque pick s'il retrouve son Riot ID) :
+
+```powershell
+python lcu_bridge.py --room team-xxxxxxxx
+```
+
+Ajoute `--code TON_CODE` si l'équipe est protégée. Le programme ne fait que lire le client.
+
 ### Divers
 - 🔔 **Activité** : historique des modifs de chacun (les changements de draft des autres s'affichent aussi en notification).
 - ⚙ **Réglages** : poids de l'équilibre, nombre d'options, **export / import** JSON (sauvegarde de l'équipe).
@@ -138,6 +163,9 @@ js/stats.js           winrates et matchups (U.GG)
 js/playerstats.js     stats des joueurs par Riot ID (DeepLoL)
 js/insights.js        ordre de draft, bans conseillés, historique, champions à travailler, Discord
 js/scout.js · history.js   onglets Adversaires et Historique
+js/share.js           image PNG de la compo
+js/protect.js         équipe protégée par un code
+companion/lcu_bridge.py    liaison avec le client LoL
 js/store.js           synchro Firebase / mode local
 js/actions.js         modifications + journal d'activité
 js/app.js             application (en-tête, onglets, modales)

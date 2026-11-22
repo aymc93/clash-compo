@@ -9,9 +9,12 @@ import { ChampionPicker } from './picker.js';
 import { PlayersView, PoolEditor } from './players.js';
 import { DraftBoard } from './draft.js';
 import { CompsView } from './comps.js';
-import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, matchup, matchupPoints } from './stats.js';
+import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, loadMeta, matchup, matchupPoints } from './stats.js';
 import { STATS_TTL, accountsOf, fetchPlayerStats, mergeStats, riotKey } from './playerstats.js';
-import { banSuggestions, compSignature, historyStats } from './insights.js';
+import { banSuggestions, blindSafety, compSignature, flexPicks, gamePlan, historyStats } from './insights.js';
+import { checkCode, protectRoom, rememberCode, unprotectRoom, changeCode } from './protect.js';
+import { firebaseConfig } from '../config.js';
+import { isWebhook, postDiscord, voteKey } from './actions.js';
 import { ScoutView } from './scout.js';
 import { HistoryView } from './history.js';
 import { dispoOf } from './players.js';
@@ -49,7 +52,7 @@ function usePlayerStats(players, accstats, save, loaded) {
     for (const p of players) {
       for (const acc of accountsOf(p)) {
         const e = entryOf(p, acc);
-        if (!e || Date.now() - (e.ts || 0) > STATS_TTL) load(p, acc);
+        if (!e || !e.puuid || Date.now() - (e.ts || 0) > STATS_TTL) load(p, acc);
       }
     }
   }, [loaded, players, accstats]);
@@ -116,6 +119,17 @@ function assignEnemyRoles(picks, explicit, statsOf) {
   });
 }
 
+/** Méta du patch (U.GG), rechargée si le rang ou la région des stats change. */
+function useMeta(cfg) {
+  const [meta, setMeta] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    loadMeta(cfg).then((m) => alive && setMeta(m), () => alive && setMeta(null));
+    return () => { alive = false; };
+  }, [cfg.rank, cfg.region]);
+  return meta;
+}
+
 function useSnapshot(store) {
   const [snap, setSnap] = useState(store.getSnapshot());
   useEffect(() => {
@@ -132,7 +146,7 @@ const sortPlayers = (players) =>
     .map(([id, p]) => ({ id, ...p, name: p.name || 'Joueur' }))
     .sort((a, b) => (a.order || 0) - (b.order || 0) || a.name.localeCompare(b.name, 'fr'));
 
-export function App({ store, room }) {
+export function App({ store, room, secured = false }) {
   const snap = useSnapshot(store);
   const state = snap.state || {};
   const players = useMemo(() => sortPlayers(state.players), [state.players]);
@@ -266,14 +280,30 @@ export function App({ store, room }) {
   const scoutData = scoutEntities.map((e) => ({ name: e.riot.name, ps: scoutApi.statsOf(e) })).filter((x) => x.ps);
   const scoutKey = scoutData.map((x) => `${x.name}:${x.ps.ts}`).join(',');
   const counterKey = bestIds.map((id) => `${id}:${counterStats(id).status}`).join(',');
+  const meta = useMeta(statsCfg);
   const bans = useMemo(() => banSuggestions({
+    meta: meta?.roles,
     scouts: scoutData,
     comp: best,
     counterOf: (id) => { const st = counterStats(id); return st.status === 'ok' ? st.data : null; },
     unavailable: usedAll,
     protect: new Set(bestIds),
-  }), [scoutKey, counterKey, best?.key, [...usedAll].join(',')]);
+  }), [scoutKey, counterKey, best?.key, [...usedAll].join(','), meta?.patch]);
   const scoutBans = useMemo(() => banSuggestions({ scouts: scoutData, unavailable: usedAll, limit: 6 }), [scoutKey, [...usedAll].join(',')]);
+
+  // Analyse de la draft : plan de jeu, flex picks, sécurité en blind, votes.
+  const plan = useMemo(() => gamePlan(best ? best.slots.map((x) => x.champ) : [], enemies.filter(Boolean).map((e) => e.champ)),
+    [best?.key, enemies.map((e) => e?.champ).join(',')]);
+  const flex = useMemo(() => flexPicks(active, usedAll), [active, [...usedAll].join(',')]);
+  const safetyOf = (id, role) => { const st = counterStats(id); return st.status === 'ok' ? blindSafety(st.data, role) : null; };
+  const votes = state.votes || {};
+  const votesOf = (comp) => {
+    const slots = Object.fromEntries(comp.slots.map((x) => [x.role, { champ: x.champ, player: x.player.id }]));
+    const v = votes[voteKey(slots)] || {};
+    const vals = Object.entries(v);
+    const meId = meInfo.playerId || store.deviceId;
+    return { up: vals.filter(([, x]) => x > 0).length, down: vals.filter(([, x]) => x < 0).length, mine: v[meId] || 0, slots };
+  };
 
   // Conseil de l'étape de draft en cours.
   const draftSuggest = {
@@ -282,7 +312,10 @@ export function App({ store, room }) {
       const top = (priority || []).find((x) => !lockedChamps.has(x.champ));
       const slot = top || best?.slots.find((x) => !lockedChamps.has(x.champ));
       if (!slot) return null;
-      return { champ: slot.champ, why: `${slot.player.name} · ${ROLE_LABEL[slot.role]}${top && top.points > 0 ? ` · −${top.points === Infinity ? '∞' : top.points} si on le perd` : ''}`, act: () => actions.toggleLock(slot.champ, slot.player.id) };
+      const safe = safetyOf(slot.champ, slot.role);
+      const isFlex = flex.some((f) => f.champ === slot.champ);
+      const extra = [isFlex ? 'flex' : null, safe?.level === 'safe' ? 'blind sûr' : safe?.level === 'risky' ? 'risqué en blind' : null].filter(Boolean).join(', ');
+      return { champ: slot.champ, why: `${slot.player.name} · ${ROLE_LABEL[slot.role]}${extra ? ` · ${extra}` : ''}${top && top.points > 0 ? ` · −${top.points === Infinity ? '∞' : top.points} si perdu` : ''}`, act: () => actions.toggleLock(slot.champ, slot.player.id) };
     })(),
   };
   const recordGame = (win) => {
@@ -450,6 +483,7 @@ export function App({ store, room }) {
       <${Icon} name="info" size=${16} />
       <span><b>Mode local</b> : les modifications restent dans ce navigateur. Pour éditer à plusieurs en direct, colle l’URL de ta base Firebase dans <code>config.js</code> (2 minutes, voir README).</span>
     </div>`}
+    ${snap.loaded && state.meta?.protected && !secured && html`<${CodeGate} room=${room} />`}
     ${snap.error && html`<div class="banner banner-error"><${Icon} name="alert" size=${16} /><span>${snap.error}</span></div>`}
 
     <main class=${cx('main', snap.loaded && tab === 'draft' && 'is-workspace')}>
@@ -466,15 +500,17 @@ export function App({ store, room }) {
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
             priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
             enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw}
-            mode=${compMode} onMode=${setCompMode} withStats=${withStats} bans=${bans} records=${records} teamName=${teamName} onRecord=${recordGame} />
+            mode=${compMode} onMode=${setCompMode} withStats=${withStats} bans=${bans} records=${records} teamName=${teamName} onRecord=${recordGame}
+            plan=${plan} flex=${flex} safetyOf=${safetyOf} votesOf=${votesOf} meta=${meta} />
         </div>`
         : tab === 'scout'
         ? html`<${ScoutView} team=${state.scout?.team || ''} actions=${actions} unavailable=${usedAll} bans=${scoutBans}
             onRefresh=${() => scoutEntities.forEach((e) => scoutApi.refresh(e))}
             scouts=${scoutEntities.map((e) => ({ id: e.id, riot: e.riot, ps: scoutApi.statsOf(e), status: scoutApi.accountsStatus(e)[0] || { status: 'loading' } }))} />`
         : tab === 'history'
-        ? html`<${HistoryView} games=${games} stats=${hist} players=${players} saved=${saved} actions=${actions} onGoDraft=${() => setTab('draft')} />`
-        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi} clashDate=${state.meta?.clashDate || ''}
+        ? html`<${HistoryView} games=${games} stats=${hist} players=${players} saved=${saved} actions=${actions} onGoDraft=${() => setTab('draft')}
+            tournament=${state.tournament || {}} opponent=${state.scout?.team || ''} />`
+        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi} clashDate=${state.meta?.clashDate || ''} meta=${meta?.roles}
             unavailable=${unavailable} onAdd=${(playerId, role) => setPicker({ mode: 'pool', playerId, role })}
             onEdit=${(playerId, champId) => setEditing({ playerId, champId })} onAddPlayer=${() => setAddingPlayer(true)} />`}
     </main>
@@ -484,7 +520,7 @@ export function App({ store, room }) {
     <${PoolEditor} open=${!!editingPlayer} player=${editingPlayer} champId=${editing?.champId} onClose=${() => setEditing(null)} actions=${actions} />
     <${AddPlayerModal} open=${addingPlayer} onClose=${() => setAddingPlayer(false)} onAdd=${(name) => actions.addPlayer(name)} />
     <${SettingsModal} open=${showSettings} onClose=${() => setShowSettings(false)} state=${state} weight=${weight} limit=${limit}
-      actions=${actions} room=${room} mode=${snap.mode} status=${snap.status} onIdentity=${() => { setShowSettings(false); setShowIdentity(true); }} />
+      actions=${actions} room=${room} mode=${snap.mode} status=${snap.status} secured=${secured} onIdentity=${() => { setShowSettings(false); setShowIdentity(true); }} />
     <${ActivityDrawer} open=${showActivity} onClose=${() => setShowActivity(false)} items=${snap.activity || []} myCid=${store.deviceId} />
     ${needIdentity && html`<${IdentityModal} teamName=${teamName} players=${players} onlineIds=${onlineIds} current=${me}
       canClose=${!!me} onClose=${() => setShowIdentity(false)}
@@ -602,7 +638,7 @@ function AddPlayerModal({ open, onClose, onAdd }) {
   <//>`;
 }
 
-function SettingsModal({ open, onClose, state, weight, limit, actions, room, mode, status, onIdentity }) {
+function SettingsModal({ open, onClose, state, weight, limit, actions, room, mode, status, onIdentity, secured }) {
   const fileRef = useRef(null);
   if (!open) return null;
   const exportData = () => {
@@ -684,6 +720,9 @@ function SettingsModal({ open, onClose, state, weight, limit, actions, room, mod
           <input ref=${fileRef} type="file" accept="application/json,.json" hidden onChange=${(e) => { const f = e.currentTarget.files?.[0]; if (f) importData(f); e.currentTarget.value = ''; }} />
         </div>
       </section>
+      ${mode === 'firebase' && html`<${AccessSettings} room=${room} secured=${secured} />`}
+      <${DiscordSettings} settings=${state.settings || {}} actions=${actions} teamName=${state.meta?.name || 'Mon équipe'} />
+      <${LcuSettings} room=${room} secured=${secured} />
       <section>
         <h4>Moi & connexion</h4>
         <div class="row-gap">
@@ -698,4 +737,121 @@ function SettingsModal({ open, onClose, state, weight, limit, actions, room, mod
       </section>
     </div>
   <//>`;
+}
+
+// ── Équipe protégée par un code ───────────────────────────────────────────
+/** Écran demandant le code d'une équipe protégée. onOk(path) ; sinon recharge la page. */
+export function CodeGate({ room, onOk }) {
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const path = await checkCode(firebaseConfig.databaseURL, room, code);
+      if (!path) { setErr('Code incorrect.'); setBusy(false); return; }
+      rememberCode(room, code.trim());
+      if (onOk) onOk(path); else location.reload();
+    } catch {
+      setErr('Connexion impossible, réessaie.');
+      setBusy(false);
+    }
+  };
+  return html`<div class="code-gate">
+    <form class="code-box panel" onSubmit=${submit}>
+      <${Logo} size=${48} />
+      <h2>Équipe protégée</h2>
+      <p class="muted">Entre le code de l’équipe pour y accéder. Demande-le à un pote de l’équipe.</p>
+      <input class="input" type="password" value=${code} placeholder="Code de l’équipe" autocomplete="off" data-autofocus
+        onInput=${(e) => setCode(e.currentTarget.value)} aria-label="Code de l’équipe" />
+      ${err && html`<p class="riot-msg warn small">${err}</p>`}
+      <button type="submit" class="btn btn-gold" disabled=${busy || !code.trim()}>${busy ? 'Vérification…' : 'Entrer'}</button>
+    </form>
+  </div>`;
+}
+
+function AccessSettings({ room, secured }) {
+  const [code, setCode] = useState('');
+  const [code2, setCode2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const base = firebaseConfig.databaseURL;
+  const run = async (fn, ok) => {
+    setBusy(true);
+    try { await fn(); toast({ text: ok, type: 'ok' }); setTimeout(() => location.reload(), 900); }
+    catch (e) { toast({ text: e.message || 'Échec', type: 'warn' }); setBusy(false); }
+  };
+  if (!secured) {
+    return html`<section>
+      <h4>Accès à l’équipe</h4>
+      <p class="muted small">Aujourd’hui, le lien d’invitation suffit pour entrer. Avec un code, il faudra en plus le code (à donner à part, par exemple en message privé).</p>
+      <div class="row-gap">
+        <input class="input input-sm" type="password" value=${code} placeholder="Nouveau code (6 caractères min.)" style=${{ maxWidth: '260px' }}
+          onInput=${(e) => setCode(e.currentTarget.value)} autocomplete="new-password" />
+        <button type="button" class="btn btn-ghost btn-sm" disabled=${busy || code.trim().length < 6}
+          onClick=${() => window.confirm('Protéger l’équipe avec ce code ? Tout le monde devra le saisir une fois.') && run(() => protectRoom(base, room, code.trim()), 'Équipe protégée par un code.')}>
+          <${Icon} name="lock" size=${14} /> Protéger
+        </button>
+      </div>
+    </section>`;
+  }
+  return html`<section>
+    <h4>Accès à l’équipe</h4>
+    <p class="muted small"><${Icon} name="lock" size=${13} /> Équipe protégée : il faut le lien <b>et</b> le code pour entrer.</p>
+    <div class="row-gap">
+      <input class="input input-sm" type="password" value=${code} placeholder="Code actuel" style=${{ maxWidth: '180px' }} onInput=${(e) => setCode(e.currentTarget.value)} />
+      <input class="input input-sm" type="password" value=${code2} placeholder="Nouveau code" style=${{ maxWidth: '180px' }} onInput=${(e) => setCode2(e.currentTarget.value)} />
+      <button type="button" class="btn btn-ghost btn-sm" disabled=${busy || !code || code2.trim().length < 6}
+        onClick=${() => run(() => changeCode(base, room, code, code2.trim()), 'Code changé.')}>Changer le code</button>
+      <button type="button" class="btn btn-ghost btn-sm danger" disabled=${busy || !code}
+        onClick=${() => window.confirm('Retirer le code ? Le lien suffira de nouveau pour entrer.') && run(() => unprotectRoom(base, room, code), 'Protection retirée.')}>Retirer le code</button>
+    </div>
+  </section>`;
+}
+
+function DiscordSettings({ settings, actions, teamName }) {
+  const [hook, setHook] = useState(settings.discordWebhook || '');
+  useEffect(() => { setHook(settings.discordWebhook || ''); }, [settings.discordWebhook]);
+  const valid = isWebhook(hook);
+  const save = () => {
+    if (hook && !valid) { toast({ text: 'Ce n’est pas un lien de webhook Discord.', type: 'warn' }); return; }
+    actions.setSetting('discordWebhook', hook.trim() || null);
+    toast({ text: hook ? 'Salon Discord relié.' : 'Salon Discord retiré.', type: 'ok' });
+  };
+  const test = async () => {
+    const ok = await postDiscord(hook, `👋 **Clash Compo** est relié à ce salon pour l’équipe « ${teamName} ».`);
+    toast({ text: ok ? 'Message de test envoyé sur Discord.' : 'Échec de l’envoi : vérifie le lien.', type: ok ? 'ok' : 'warn' });
+  };
+  const auto = settings.discordAuto !== false;
+  return html`<section>
+    <h4>Discord</h4>
+    <p class="muted small">Colle le lien d’un webhook (Discord › Paramètres du salon › Intégrations › Webhooks › Copier l’URL). Les compos validées et les résultats y seront postés automatiquement. Le lien est visible par toute personne qui a accès à l’équipe.</p>
+    <div class="row-gap">
+      <input class="input input-sm" value=${hook} placeholder="https://discord.com/api/webhooks/…" style=${{ flex: '1', minWidth: '260px' }}
+        onInput=${(e) => setHook(e.currentTarget.value)} spellcheck="false" autocomplete="off" />
+      <button type="button" class="btn btn-ghost btn-sm" onClick=${save} disabled=${hook === (settings.discordWebhook || '')}>Enregistrer</button>
+      <button type="button" class="btn btn-ghost btn-sm" onClick=${test} disabled=${!valid}>Tester</button>
+    </div>
+    ${settings.discordWebhook && html`<label class="field-inline small">
+      <input type="checkbox" checked=${auto} onChange=${(e) => actions.setSetting('discordAuto', e.currentTarget.checked)} />
+      Poster automatiquement les compos validées et les résultats
+    </label>`}
+  </section>`;
+}
+
+function LcuSettings({ room, secured }) {
+  const cmd = `python lcu_bridge.py --room ${room}${secured ? ' --code TON_CODE' : ''}`;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(cmd); toast({ text: 'Commande copiée.', type: 'ok' }); }
+    catch { window.prompt('Copie cette commande :', cmd); }
+  };
+  return html`<section>
+    <h4>Liaison avec le client LoL</h4>
+    <p class="muted small">Un petit programme lancé sur le PC d’un joueur lit la sélection des champions en direct et remplit la draft du site tout seul (bans, picks, côté). Il faut Python installé. Télécharge
+      <a href="https://raw.githubusercontent.com/aymc93/clash-compo/main/companion/lcu_bridge.py" target="_blank" rel="noopener" download>lcu_bridge.py</a>,
+      puis lance dans le même dossier :</p>
+    <div class="row-gap"><code class="cmd">${cmd}</code><button type="button" class="btn btn-ghost btn-sm" onClick=${copy}>Copier</button></div>
+  </section>`;
 }

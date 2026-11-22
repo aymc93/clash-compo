@@ -52,6 +52,10 @@ export function mergeStats(list) {
   const out = { season: valid[0].season, ts: Math.min(...valid.map((s) => s.ts || 0)), total: null, roles: {}, champs: {}, accounts: valid.length };
   const ranked = valid.filter((v) => bestRank(v)).sort((a, b) => rankValue(bestRank(b)) - rankValue(bestRank(a)));
   if (ranked.length) out.rank = ranked[0].rank;
+  // Compte de référence pour la courbe de LP : le mieux classé, sinon le plus joué.
+  const ref = ranked[0] || [...valid].sort((a, b) => (b.total?.[0] || 0) - (a.total?.[0] || 0))[0];
+  out.puuid = ref.puuid;
+  out.riot = ref.riot;
   for (const s of valid) {
     out.total = mergeRow(out.total, s.total);
     for (const [role, r] of Object.entries(s.roles || {})) {
@@ -148,7 +152,7 @@ export async function fetchPlayerStats(riot) {
   }
   return {
     riot: { name: info.riot_id_name || riot.name, tag: info.riot_id_tag_line || riot.tag, platform },
-    season, ts: Date.now(), level: info.level || 0,
+    season, ts: Date.now(), level: info.level || 0, puuid: info.puu_id,
     total: row(totalRow), roles, champs, ...(rank ? { rank } : {}),
   };
 }
@@ -226,3 +230,27 @@ export function topChamps(ps, { minGames = 2 } = {}) {
 }
 
 export const kdaTxt = (x) => (x || 0).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+// ── Forme : évolution des LP (classé solo/duo) ─────────────────────────────
+/** Valeur absolue d'un rang en LP (Fer IV 0 LP = 0 ; Maître et + = 2800 + LP). */
+export function absoluteLp(tier, division, lp) {
+  const i = TIERS.indexOf(String(tier || '').toUpperCase());
+  if (i < 0) return null;
+  if (i >= 7) return 2800 + (lp || 0);
+  return i * 400 + (4 - (division || 4)) * 100 + (lp || 0);
+}
+const lpCache = new Map();
+/** → [{ t (ms), v (LP absolus) }] trié du plus ancien au plus récent. */
+export function fetchLpHistory(puuid, platform = DEFAULT_PLATFORM) {
+  const ck = `${puuid}|${platform}`;
+  if (!lpCache.has(ck)) {
+    const p = getJson(`${API}/summoner/tier-chart?${new URLSearchParams({ puu_id: puuid, platform_id: platform, last_match_id: '' })}`)
+      .then((d) => (d.ranked_solo_5x5 || [])
+        .map((x) => ({ t: (x.timestamp || 0) * 1000, v: absoluteLp(x.tier, x.division, x.league_points) }))
+        .filter((x) => x.v != null && x.t)
+        .sort((a, b) => a.t - b.t));
+    p.catch(() => lpCache.delete(ck));
+    lpCache.set(ck, p);
+  }
+  return lpCache.get(ck);
+}
