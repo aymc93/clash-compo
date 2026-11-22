@@ -1,6 +1,7 @@
-// Résultats : compo recommandée, alternatives, priorités de pick, compos enregistrées.
-import { html } from './vendor.js';
-import { cx, plural, signed } from './util.js';
+// Résultats : colonne centrale (compo recommandée + autres options) et panneau latéral
+// (priorités de pick, matchups, compos gardées).
+import { html, useState } from './vendor.js';
+import { cx, lsGet, lsSet, plural, signed } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, champ, iconUrl, loadingUrl, splashUrl } from './data.js';
 import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
@@ -10,43 +11,71 @@ import { kdaTxt } from './playerstats.js';
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
 
 const compSig = (slots) => ROLES.map((r) => `${slots[r]?.champ}:${slots[r]?.player}`).join('|');
+const OPTIONS_SHOWN = 4;
 
+/** Rend deux colonnes : la compo (centre) et le panneau latéral. */
 export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0 }) {
   const comps = result.comps;
-  const matchups = html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`;
-  const modeBar = html`<${ModeBar} mode=${mode} onMode=${onMode} withStats=${withStats} total=${players.length} onGoPlayers=${onGoPlayers} />`;
-  const savedSigs = new Map(saved.map(({ id, item }) => [compSig(item.slots || {}), item.name]));
-  if (!comps.length) {
-    return html`<div class="comps-layout">
-      <div class="comps-main">${modeBar}<${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} /></div>
-      <aside class="comps-side">${matchups}<${SavedPanel} saved=${saved} actions=${actions} /></aside>
-    </div>`;
-  }
-  const current = comps[Math.min(selected, comps.length - 1)];
-  const rank = comps.indexOf(current);
-  return html`<div class="comps-layout">
-    <div class="comps-main">
-      ${modeBar}
-      <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions}
-        mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
-      ${comps.length > 1 && html`<section class="comp-list">
-        <div class="section-title">
-          <h3>Toutes les options</h3>
-          <span class="muted small">Une ligne = une répartition des rôles différente. Clique pour l’afficher en grand.</span>
-        </div>
-        <div class="mini-grid">
-          ${comps.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
-            weight=${weight} onClick=${() => onSelect(i)} />`)}
-        </div>
-      </section>`}
-      ${result.truncated && html`<p class="hint">Beaucoup de possibilités : recherche limitée, les résultats sont très bons mais peut-être pas parfaits.</p>`}
+  const [showAll, setShowAll] = useState(false);
+  const savedSigs = new Map(saved.map(({ item }) => [compSig(item.slots || {}), item.name]));
+  const current = comps.length ? comps[Math.min(selected, comps.length - 1)] : null;
+  const rank = current ? comps.indexOf(current) : -1;
+  const options = showAll ? comps : comps.slice(0, OPTIONS_SHOWN);
+
+  const center = html`<section class="col col-center" aria-label="Compos proposées">
+    <div class="col-head">
+      <h2>${rank > 0 ? `Option n°${rank + 1}` : 'Meilleure compo'}</h2>
+      <${ModeSwitch} mode=${mode} onMode=${onMode} withStats=${withStats} total=${players.length} onGoPlayers=${onGoPlayers} />
     </div>
-    <aside class="comps-side">
-      ${matchups}
-      <${PriorityPanel} items=${priority} weight=${weight} />
-      <${SavedPanel} saved=${saved} actions=${actions} />
-    </aside>
-  </div>`;
+    ${current
+      ? html`
+        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions}
+          mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
+        ${comps.length > 1 && html`<div class="options">
+          <div class="options-head">
+            <h3>Autres options</h3>
+            <span class="muted tiny">une répartition des rôles par ligne</span>
+          </div>
+          <div class="options-list">
+            ${options.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
+              weight=${weight} onClick=${() => onSelect(i)} />`)}
+          </div>
+          ${comps.length > OPTIONS_SHOWN && html`<button type="button" class="link-btn options-more" onClick=${() => setShowAll(!showAll)}>
+            ${showAll ? 'Afficher moins' : `Voir les ${comps.length - OPTIONS_SHOWN} autres`}
+          </button>`}
+        </div>`}
+        ${result.truncated && html`<p class="hint">Beaucoup de possibilités : recherche limitée, les résultats sont très bons mais peut-être pas parfaits.</p>`}`
+      : html`<${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} />`}
+  </section>`;
+
+  return [center, html`<${SidePanel} key="side" priority=${current ? priority : []} weight=${weight} saved=${saved} actions=${actions}
+    enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} hasComp=${!!current} />`];
+}
+
+/** Panneau latéral à onglets : une seule chose à la fois. */
+function SidePanel({ priority, weight, saved, actions, enemies, players, unavailable, muRaw, hasComp }) {
+  const muCount = enemies.filter((e) => e?.role).length;
+  const [tab, setTabRaw] = useState(() => lsGet('cc.sideTab', 'prio'));
+  const setTab = (t) => { setTabRaw(t); lsSet('cc.sideTab', t); };
+  const tabs = [
+    ['prio', 'Priorités', null, 'Ce que la meilleure compo perd si l’adversaire ban ou prend ce champion : pick tôt ceux du haut.'],
+    ['mu', 'Matchups', muCount || null, 'Notre winrate contre chaque pick adverse, dans sa lane, avec les champions de nos pools.'],
+    ['saved', 'Gardées', saved.length || null, 'Compos validées par l’équipe. Pendant la draft, une compo devient « cassée » si un de ses champions est banni ou pris.'],
+  ];
+  return html`<aside class="col col-side" aria-label="Infos de draft">
+    <div class="seg seg-wide side-tabs" role="tablist">
+      ${tabs.map(([id, label, n, tip]) => html`<button type="button" role="tab" aria-selected=${tab === id} class=${cx(tab === id && 'on')} title=${tip} onClick=${() => setTab(id)}>
+        ${label}${n != null && html`<span class="tab-n">${n}</span>`}
+      </button>`)}
+    </div>
+    <div class="side-body">
+      ${tab === 'prio' && (hasComp
+        ? html`<${PriorityPanel} items=${priority} weight=${weight} />`
+        : html`<p class="side-empty muted small">Les priorités de pick apparaissent dès qu’une compo est possible.</p>`)}
+      ${tab === 'mu' && html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`}
+      ${tab === 'saved' && html`<${SavedPanel} saved=${saved} actions=${actions} />`}
+    </div>
+  </aside>`;
 }
 
 function EmptyComps({ reason, onGoPlayers, playersCount }) {
@@ -81,24 +110,20 @@ function EmptyComps({ reason, onGoPlayers, playersCount }) {
 }
 
 /** Choix du calcul : niveaux déclarés (S/A/B/C) ou vraies stats des joueurs (Riot ID). */
-function ModeBar({ mode, onMode, withStats, total, onGoPlayers }) {
+function ModeSwitch({ mode, onMode, withStats, total, onGoPlayers }) {
   const stats = mode === 'stats';
-  return html`<div class=${cx('mode-bar', stats && 'is-stats')}>
-    <div class="seg" role="group" aria-label="Calcul des compos">
-      <button type="button" class=${cx(!stats && 'on')} onClick=${() => stats && onMode('tiers')} aria-pressed=${!stats}>
-        <${Icon} name="sliders" size=${15} /> Selon nos niveaux
+  return html`<div class="mode-switch">
+    <div class="seg seg-sm" role="group" aria-label="Calcul des compos">
+      <button type="button" class=${cx(!stats && 'on')} onClick=${() => stats && onMode('tiers')} aria-pressed=${!stats}
+        title="Compos calculées avec les niveaux S / A / B / C renseignés dans les pools">
+        <${Icon} name="sliders" size=${14} /> Nos niveaux
       </button>
-      <button type="button" class=${cx(stats && 'on on-stats')} onClick=${() => !stats && onMode('stats')} aria-pressed=${stats}>
-        <${Icon} name="sparkles" size=${15} /> Meilleures compos selon nos stats
+      <button type="button" class=${cx(stats && 'on on-stats')} onClick=${() => !stats && onMode('stats')} aria-pressed=${stats}
+        title=${`Meilleures compos selon nos stats classées de la saison (expérience, winrate et KDA de chacun, même hors pool) — ${withStats}/${total} joueurs avec un Riot ID`}>
+        <${Icon} name="sparkles" size=${14} /> Nos stats
       </button>
     </div>
-    <span class="muted small mode-hint">
-      ${stats
-        ? withStats
-          ? html`Calculé avec les parties classées de la saison (${withStats}/${total} joueur${total > 1 ? 's' : ''} avec un Riot ID) : expérience, winrate et KDA de chacun sur chaque champion, même hors pool.`
-          : html`<${Icon} name="alert" size=${13} /> Aucun titulaire n’a de Riot ID : ajoute-les dans l’onglet <button type="button" class="link-btn" onClick=${onGoPlayers}>Joueurs</button>.`
-        : 'Calculé avec les niveaux S / A / B / C que vous avez renseignés.'}
-    </span>
+    ${stats && !withStats && html`<button type="button" class="link-btn warn-link" onClick=${onGoPlayers}><${Icon} name="alert" size=${13} /> Ajoutez vos Riot ID</button>`}
   </div>`;
 }
 
@@ -110,20 +135,15 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
     actions.saveComp(comp, mode);
     toast({ text: 'Compo validée : elle est gardée dans « Compos enregistrées » pour toute l’équipe.', type: 'ok' });
   };
-  return html`<article class="hero panel">
+  const scoreTip = [
+    `${stats ? 'Performance' : 'Confort'} des joueurs : ${String(comp.comfort).replace('.', ',')} / ${MAX_COMFORT}`,
+    `Équilibre de la compo : ${signed(bal.total * weight)}`,
+    comp.hasMatchups ? `Matchups : ${signed(Math.round(comp.matchup))}` : null,
+  ].filter(Boolean).join('\n');
+  return html`<article class="hero">
     <header class="hero-head">
-      <div class="hero-title">
-        <span class="eyebrow">${rank === 0 ? html`<${Icon} name="crown" size=${14} /> Meilleure compo${stats ? ' selon nos stats' : ''}` : `Option n°${rank + 1}`}</span>
-        <div class="hero-chips"><${BalanceChips} b=${bal} /></div>
-      </div>
-      <div class="hero-score" title=${stats ? 'Note = performance des joueurs (stats + niveau) + équilibre de la compo' : 'Note = confort des joueurs + équilibre de la compo'}>
-        <div class=${cx('score', scoreClass(r))}><b>${r}</b><span>/100</span></div>
-        <div class="score-break">
-          <span>${stats ? 'Perf' : 'Confort'} <b>${String(comp.comfort).replace('.', ',')}</b>/${MAX_COMFORT}</span>
-          <span>Équilibre <b>${signed(bal.total * weight)}</b></span>
-          ${comp.hasMatchups && html`<span>Matchups <b>${signed(Math.round(comp.matchup))}</b></span>`}
-        </div>
-      </div>
+      <div class="hero-chips"><${BalanceChips} b=${bal} /></div>
+      <div class=${cx('score', scoreClass(r))} title=${scoreTip}><b>${r}</b><span>/100</span></div>
     </header>
     <div class="hero-slots">
       ${comp.slots.map((s, ri) => html`<${SlotCard} key=${s.role + s.champ} slot=${s} alts=${alternatives(result, comp, ri)} stats=${stats}
@@ -131,12 +151,12 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
     </div>
     <footer class="hero-foot">
       <span class="muted small">
-        ${comp.bench.length ? html`<${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b>` : html`<${Icon} name="info" size=${14} /> Les petites icônes = autres choix du joueur à ce poste.`}
+        ${comp.bench.length > 0 && html`<${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b>`}
       </span>
       ${savedName
         ? html`<span class="kept"><${Icon} name="check" size=${16} /> Compo gardée · <b>${savedName}</b></span>`
-        : html`<button type="button" class="btn btn-gold btn-sm" onClick=${keep} title="Garder cette compo dans « Compos enregistrées » (visible par toute l’équipe)">
-            <${Icon} name="check" size=${16} /> Valider et garder cette compo
+        : html`<button type="button" class="btn btn-gold" onClick=${keep} title="Garder cette compo dans « Compos enregistrées » (visible par toute l’équipe)">
+            <${Icon} name="check" size=${16} /> Valider et garder
           </button>`}
     </footer>
   </article>`;
@@ -174,11 +194,11 @@ function SlotCard({ slot, alts, locked, onToggleLock, stats }) {
           : html`<span class="sc-perf muted">Pas de partie classée</span>`)}
       </div>
     </div>
-    <div class="sc-alts">
+    <div class="sc-alts" title="Autres choix du joueur à ce poste">
       ${alts.length
         ? alts.map((a) => html`<${ChampIcon} key=${a.champ} id=${a.champ} size=${28} tier=${a.tier}
             title=${`Sinon : ${champ(a.champ).name} (${a.tier ? TIER_LETTER[a.tier] : 'hors pool'})${a.perf ? ` — ${plural(a.perf.games, 'partie')}, ${pct(a.perf.wr, 0)}` : ''}${a.mu ? ` — ${pct(a.mu.wr)} contre ${champ(a.mu.vs).name}` : ''}`} />`)
-        : html`<span class="muted tiny">Pas d’autre choix</span>`}
+        : null}
     </div>
   </div>`;
 }
@@ -190,7 +210,7 @@ function BalanceChips({ b }) {
   return html`
     <span class=${cx('chip-stat', lopsided && 'warn')} title="Répartition des dégâts physiques / magiques">
       <span class="dmg-bar"><span style=${{ width: `${adPct}%` }}></span></span>
-      AD <b>${adPct}%</b> · AP <b>${100 - adPct}%</b>
+      <b>${adPct}</b> AD · <b>${100 - adPct}</b> AP
     </span>
     <span class=${cx('chip-stat', b.front === 0 && 'warn')} title="Champions capables d’encaisser">
       <${Icon} name="shield" size=${14} /> ${b.front} frontline
@@ -208,24 +228,24 @@ function CompMini({ comp, rank, active, best, weight, onClick }) {
       <span class="mini-rank">#${rank + 1}</span>
       <span class=${cx('mini-score', scoreClass(r))}>${r}</span>
       ${rank > 0 && html`<span class="mini-delta">${delta === 0 ? '=' : signed(delta)}</span>`}
-      ${comp.balance.warnings.length > 0 && html`<span class="mini-warn" title=${comp.balance.warnings.join(' · ')}><${Icon} name="alert" size=${13} /> ${comp.balance.warnings[0]}</span>`}
     </div>
     <div class="mini-slots">
-      ${comp.slots.map((s) => html`<div class="mini-slot" key=${s.role}>
-        <${ChampIcon} id=${s.champ} size=${42} tier=${s.off || !s.tier ? null : s.tier} />
-        <span class="mini-player" style=${{ color: s.player.color }} title=${`${s.player.name} · ${ROLE_LABEL[s.role]}`}>${s.player.name}</span>
+      ${comp.slots.map((s) => html`<div class="mini-slot" key=${s.role} title=${`${ROLE_LABEL[s.role]} : ${champ(s.champ).name} (${s.player.name})`}>
+        <${ChampIcon} id=${s.champ} size=${34} tier=${s.off || !s.tier ? null : s.tier} title="" />
+        <span class="mini-player" style=${{ color: s.player.color }}>${s.player.name}</span>
       </div>`)}
     </div>
+    ${comp.balance.warnings.length > 0
+      ? html`<span class="mini-warn" title=${comp.balance.warnings.join(' · ')}><${Icon} name="alert" size=${13} /></span>`
+      : html`<span class="mini-warn"></span>`}
   </button>`;
 }
 
 /** Pour chaque pick adverse : nos champions (pools des titulaires) classés par winrate contre lui. */
 function MatchupPanel({ enemies, players, unavailable, muRaw }) {
   const list = enemies.filter((e) => e?.role);
-  if (!list.length) return null;
-  return html`<section class="panel side-panel">
-    <div class="panel-head"><h3><${Icon} name="swords" size=${16} /> Matchups adverses</h3></div>
-    <p class="muted small">Notre winrate contre chaque pick adverse, dans sa lane, avec les champions de nos pools.</p>
+  if (!list.length) return html`<p class="side-empty muted small">Ajoute les picks adverses dans la draft : tu verras ici nos meilleurs champions contre chacun, dans sa lane.</p>`;
+  return html`<div class="side-list">
     ${list.map((e) => {
       const wr = e.stats.status === 'ok' ? roleWinrate(e.stats.data, e.role) : null;
       const rows = [];
@@ -262,15 +282,13 @@ function MatchupPanel({ enemies, players, unavailable, muRaw }) {
           : html`<p class="muted tiny">Personne n’a de champion en ${ROLE_LABEL[e.role]} dans son pool.</p>`)}
       </div>`;
     })}
-  </section>`;
+  </div>`;
 }
 
 function PriorityPanel({ items }) {
   const level = (it) => (it.points === Infinity || it.points >= 6 ? 'high' : it.points >= 3 ? 'mid' : 'low');
   const levelTxt = { high: 'À sécuriser', mid: 'Important', low: 'Remplaçable' };
-  return html`<section class="panel side-panel">
-    <div class="panel-head"><h3><${Icon} name="target" size=${16} /> Priorités de pick</h3></div>
-    <p class="muted small">Ce que la meilleure compo perd si l’adversaire ban ou prend ce champion. Pick tôt ceux du haut.</p>
+  return html`<div class="side-list">
     ${items == null
       ? html`<div class="skeleton-list"><span></span><span></span><span></span></div>`
       : items.length === 0
@@ -288,14 +306,13 @@ function PriorityPanel({ items }) {
             </div>
           </li>`)}
         </ol>`}
-  </section>`;
+  </div>`;
 }
 
 function SavedPanel({ saved, actions }) {
-  return html`<section class="panel side-panel">
-    <div class="panel-head"><h3><${Icon} name="bookmark" size=${16} /> Compos enregistrées</h3></div>
+  return html`<div class="side-list">
     ${saved.length === 0
-      ? html`<p class="muted small">Enregistrez vos plans de jeu avant le Clash : pendant la draft, vous verrez tout de suite si un ban en casse un.</p>`
+      ? html`<p class="side-empty muted small">Aucune compo gardée. Clique sur « Valider et garder » sous une compo : pendant la draft, tu verras tout de suite si un ban la casse.</p>`
       : html`<ul class="saved">
         ${saved.map(({ id, item, ev }) => html`<li class=${cx('saved-item', !ev.ok && 'is-broken')} key=${id}>
           <div class="saved-head">
@@ -316,5 +333,5 @@ function SavedPanel({ saved, actions }) {
           ${!ev.ok && html`<p class="saved-why"><${Icon} name="alert" size=${13} /> ${ev.reasons.join(' · ')}</p>`}
         </li>`)}
       </ul>`}
-  </section>`;
+  </div>`;
 }

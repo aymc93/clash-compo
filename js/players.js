@@ -15,8 +15,8 @@ export function PlayersView({ players, actions, meId, onlineIds, unavailable, on
   return html`<div class="players-view">
     <div class="view-head">
       <div>
-        <h1>Joueurs & pools</h1>
-        <p class="muted">Chacun renseigne ses champions et son niveau <b>par rôle</b>. Personne n’a de rôle attitré : le moteur trouve la meilleure répartition.</p>
+        <h1>Joueurs</h1>
+        <p class="muted">Chacun lie son Riot ID et ajoute ses champions, avec un niveau par rôle.</p>
       </div>
       <button type="button" class="btn btn-gold" onClick=${onAddPlayer}><${Icon} name="userPlus" size=${17} /> Ajouter un joueur</button>
     </div>
@@ -34,18 +34,8 @@ export function PlayersView({ players, actions, meId, onlineIds, unavailable, on
       </button>
     </div>
 
-    <${TierLegend} />
+    <p class="muted legal players-legal">Clash Compo n’est pas approuvé par Riot Games et ne reflète pas les opinions de Riot Games ou de toute personne officiellement impliquée dans la production ou la gestion des propriétés de Riot Games. Riot Games et toutes les propriétés associées sont des marques commerciales ou des marques déposées de Riot Games, Inc.</p>
     <${ImportModal} player=${importPlayer} ps=${importPlayer ? pstats.statsOf(importPlayer) : null} actions=${actions} onClose=${() => setImporting(null)} />
-  </div>`;
-}
-
-function TierLegend() {
-  return html`<div class="legend panel">
-    <h3>Niveaux</h3>
-    <ul>
-      ${[4, 3, 2, 1].map((t) => html`<li><span class=${cx('tier-pill', `t${t}`)}>${TIER_LETTER[t]}</span> ${TIER_NAME[t]}</li>`)}
-    </ul>
-    <p class="muted small">Clique sur un champion pour changer son niveau ou ajouter un autre rôle (ex. Sett top <b>et</b> support).</p>
   </div>`;
 }
 
@@ -118,37 +108,22 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
 }
 
 function Coverage({ players }) {
-  const cell = (p, r) => {
-    const tiers = Object.values(p.pool || {}).map((roles) => roles?.[r]).filter(Boolean);
-    return { best: tiers.length ? Math.max(...tiers) : 0, count: tiers.length };
-  };
-  const roleCount = (r) => players.filter((p) => cell(p, r).count > 0).length;
-  return html`<section class="coverage panel">
-    <div class="panel-head">
-      <h3><${Icon} name="shield" size=${16} /> Couverture des rôles</h3>
-      <span class="muted small">Meilleur niveau · nombre de champions (titulaires)</span>
+  const best = (p, r) => Math.max(0, ...Object.values(p.pool || {}).map((roles) => roles?.[r] || 0));
+  return html`<section aria-label="Couverture des rôles">
+    <div class="cov-strip">
+      ${ROLES.map((r) => {
+        const who = players.map((p) => ({ p, t: best(p, r) })).filter((x) => x.t > 0).sort((a, b) => b.t - a.t);
+        const top = who[0]?.t || 0;
+        return html`<div class=${cx('cov-chip', !who.length && 'is-empty')} key=${r}
+          title=${who.length ? `${ROLE_LABEL[r]} : ${who.map((x) => `${x.p.name} (${TIER_LETTER[x.t]})`).join(', ')}` : `Personne ne joue ${ROLE_LABEL[r]} !`}>
+          <${RoleIcon} role=${r} size=${18} />
+          <span>${ROLE_LABEL[r]}</span>
+          ${top > 0 && html`<span class=${cx('tier-pill', `t${top}`)}>${TIER_LETTER[top]}</span>`}
+          <span class="cov-n">${who.length ? plural(who.length, 'joueur') : 'personne'}</span>
+        </div>`;
+      })}
     </div>
-    <div class="cov-scroll">
-      <div class="cov-table" style=${{ '--rows': players.length + 1 }}>
-        <div class="cov-cell cov-corner"></div>
-        ${ROLES.map((r) => {
-          const n = roleCount(r);
-          return html`<div class=${cx('cov-cell cov-h', n === 0 && 'is-empty')} title=${n === 0 ? 'Personne ne joue ce rôle !' : plural(n, 'joueur')}>
-            <${RoleIcon} role=${r} size=${16} /><span>${ROLE_LABEL[r]}</span>${n === 0 && html`<${Icon} name="alert" size=${13} />`}
-          </div>`;
-        })}
-        ${players.map((p) => html`
-          <div class="cov-cell cov-p" key=${'n' + p.id}><span class="dot" style=${{ background: p.color }}></span>${p.name}</div>
-          ${ROLES.map((r) => {
-            const { best, count } = cell(p, r);
-            return html`<div class=${cx('cov-cell cov-v', best && `t${best}`)} key=${p.id + r}>
-              ${best ? html`<b>${TIER_LETTER[best]}</b><span>${count}</span>` : html`<span class="muted">—</span>`}
-            </div>`;
-          })}
-        `)}
-      </div>
-    </div>
-    ${players.length < 5 && html`<p class="hint warn"><${Icon} name="alert" size=${14} /> Il faut au moins 5 titulaires pour générer des compos (actuellement ${players.length}).</p>`}
+    ${players.length < 5 && html`<p class="hint warn" style=${{ marginTop: '10px' }}><${Icon} name="alert" size=${14} /> Il faut au moins 5 titulaires pour proposer des compos (actuellement ${players.length}).</p>`}
   </section>`;
 }
 

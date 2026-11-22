@@ -7,9 +7,8 @@ import { DRAFT_GROUPS, GROUP_LABEL, slotValues } from './actions.js';
 import { ConfirmButton, Icon, toast } from './ui.js';
 
 /**
- * props : draft, players (titulaires), actions, usedAll (Set des champions déjà dans la draft),
- *         owners(id) → noms des joueurs qui l'ont en pool, autoPlayer(id) → joueur proposé par la meilleure compo,
- *         openSlot(group, idx), quickRef
+ * Colonne de draft : ajout rapide, puis « Nous » et « Eux » (bans en ligne, picks en liste).
+ * props : draft, players (titulaires), actions, usedAll, owners(id), autoPlayer(id), openSlot(group, idx), quickRef, enemies
  */
 export function DraftBoard({ draft = {}, players, actions, usedAll, owners, autoPlayer, openSlot, quickRef, enemies = [] }) {
   const side = draft.side === 'red' ? 'red' : 'blue';
@@ -17,66 +16,49 @@ export function DraftBoard({ draft = {}, players, actions, usedAll, owners, auto
   const filled = (g) => slotValues(draft[g]).filter((v) => (g === 'ourPicks' ? v?.champ : v)).length;
   const total = DRAFT_GROUPS.reduce((n, g) => n + filled(g), 0);
 
-  return html`<section class="draft panel">
-    <div class="panel-head draft-head">
-      <div>
-        <h2><${Icon} name="swords" size=${18} /> Draft</h2>
-        <p class="muted small">Entre les bans et les picks au fil de la draft : les compos se recalculent en direct, pour tout le monde.</p>
-      </div>
-      <div class="draft-tools">
-        <div class="seg" role="group" aria-label="Notre côté">
-          <button type="button" class=${cx(side === 'blue' && 'on side-blue')} onClick=${() => side !== 'blue' && actions.setSide('blue')}>Côté bleu</button>
-          <button type="button" class=${cx(side === 'red' && 'on side-red')} onClick=${() => side !== 'red' && actions.setSide('red')}>Côté rouge</button>
+  return html`<div class="draft">
+    <div class="col-head">
+      <h2>Draft</h2>
+      <div class="col-head-tools">
+        <div class="seg seg-sm seg-side" role="group" aria-label="Notre côté">
+          <button type="button" class=${cx(side === 'blue' && 'on side-blue')} onClick=${() => side !== 'blue' && actions.setSide('blue')} title="On est côté bleu">Bleu</button>
+          <button type="button" class=${cx(side === 'red' && 'on side-red')} onClick=${() => side !== 'red' && actions.setSide('red')} title="On est côté rouge">Rouge</button>
         </div>
-        <${ConfirmButton} class="btn btn-ghost btn-sm" onConfirm=${actions.resetDraft} confirmLabel="Tout effacer ?" title="Vider les bans et les picks">
-          <${Icon} name="refresh" size=${15} /> Réinitialiser${total ? ` (${total})` : ''}
-        <//>
+        ${total > 0 && html`<${ConfirmButton} class="icon-btn icon-btn-sm" onConfirm=${actions.resetDraft} confirmLabel=${html`<${Icon} name="check" size=${14} />`} title="Vider la draft">
+          <${Icon} name="refresh" size=${15} />
+        <//>`}
       </div>
     </div>
 
     <${QuickAdd} draft=${draft} actions=${actions} usedAll=${usedAll} owners=${owners} filled=${filled} inputRef=${quickRef} />
 
-    <div class="teams">
-      <${TeamRow} label="Nous" side=${side} ours bans=${slotValues(draft.ourBans)} picks=${slotValues(draft.ourPicks)}
-        banGroup="ourBans" pickGroup="ourPicks" players=${players} actions=${actions} owners=${owners} autoPlayer=${autoPlayer} openSlot=${openSlot} />
-      <${TeamRow} label="Eux" side=${enemySide} bans=${slotValues(draft.enemyBans)} picks=${slotValues(draft.enemyPicks)}
-        banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot}
-        enemies=${enemies} />
-    </div>
-    ${enemies.some(Boolean) && html`<p class="muted tiny stats-credit">Winrates : U.GG, ranked solo/duo, patch en cours. Le rôle des picks adverses est deviné (« Auto ») tant que vous ne le précisez pas.</p>`}
-  </section>`;
+    <${Team} label="Nous" side=${side} ours bans=${slotValues(draft.ourBans)} picks=${slotValues(draft.ourPicks)}
+      banGroup="ourBans" pickGroup="ourPicks" players=${players} actions=${actions} owners=${owners} autoPlayer=${autoPlayer} openSlot=${openSlot} />
+    <${Team} label="Eux" side=${enemySide} bans=${slotValues(draft.enemyBans)} picks=${slotValues(draft.enemyPicks)}
+      banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot} enemies=${enemies} />
+  </div>`;
 }
 
-function TeamRow({ label, side, ours, bans, picks, banGroup, pickGroup, players, actions, owners, autoPlayer, openSlot, enemies }) {
-  return html`<div class=${cx('team', `side-${side}`, ours && 'is-ours')}>
-    <div class="team-label">
-      <span class="side-dot"></span>
-      <b>${label}</b>
-      <span class="muted small">${side === 'blue' ? 'côté bleu' : 'côté rouge'}</span>
+function Team({ label, side, ours, bans, picks, banGroup, pickGroup, players, actions, owners, autoPlayer, openSlot, enemies }) {
+  return html`<section class=${cx('team', `side-${side}`, ours && 'is-ours')}>
+    <header class="team-head"><span class="side-dot"></span><b>${label}</b></header>
+    <div class="team-bans" aria-label=${`Bans ${label}`}>
+      ${bans.map((id, i) => html`<${Slot} key=${i} kind="ban" id=${id} label=${`${GROUP_LABEL[banGroup]} ${i + 1}`}
+        onOpen=${() => openSlot(banGroup, i)} onClear=${() => actions.setSlot(banGroup, i, null)} owners=${id ? owners(id) : ''} />`)}
     </div>
-    <div class="slot-group">
-      <span class="slot-group-label">Bans</span>
-      <div class="slots">
-        ${bans.map((id, i) => html`<${Slot} key=${i} kind="ban" id=${id} label=${`${GROUP_LABEL[banGroup]} ${i + 1}`}
-          onOpen=${() => openSlot(banGroup, i)} onClear=${() => actions.setSlot(banGroup, i, null)} owners=${id ? owners(id) : ''} />`)}
-      </div>
-    </div>
-    <div class="slot-group">
-      <span class="slot-group-label">Picks</span>
-      <div class="slots">
-        ${picks.map((v, i) => (ours
-          ? html`<${OurPick} key=${i} idx=${i} value=${v} players=${players} actions=${actions} autoPlayer=${autoPlayer} onOpen=${() => openSlot(pickGroup, i)} />`
-          : html`<${EnemyPick} key=${i} idx=${i} id=${v} enemy=${enemies[i]} actions=${actions}
-              onOpen=${() => openSlot(pickGroup, i)} owners=${v ? owners(v) : ''} />`))}
-      </div>
-    </div>
-  </div>`;
+    <ol class="team-picks">
+      ${picks.map((v, i) => (ours
+        ? html`<${OurPick} key=${i} idx=${i} value=${v} players=${players} actions=${actions} autoPlayer=${autoPlayer} onOpen=${() => openSlot(pickGroup, i)} />`
+        : html`<${EnemyPick} key=${i} idx=${i} id=${v} enemy=${enemies[i]} actions=${actions}
+            onOpen=${() => openSlot(pickGroup, i)} owners=${v ? owners(v) : ''} />`))}
+    </ol>
+  </section>`;
 }
 
 function Slot({ kind, id, label, onOpen, onClear, owners }) {
   if (!id) {
     return html`<button type="button" class=${cx('slot', `slot-${kind}`, 'is-empty')} onClick=${onOpen} aria-label=${`Choisir : ${label}`} title=${label}>
-      <${Icon} name="plus" size=${14} />
+      <${Icon} name="plus" size=${13} />
     </button>`;
   }
   const c = champ(id);
@@ -92,36 +74,39 @@ function Slot({ kind, id, label, onOpen, onClear, owners }) {
 function EnemyPick({ idx, id, enemy, actions, onOpen, owners }) {
   const slot = html`<${Slot} kind="pick" id=${id} label=${`Pick adverse ${idx + 1}`} onOpen=${onOpen}
     onClear=${() => actions.setSlot('enemyPicks', idx, null)} owners=${owners} />`;
-  if (!id) return html`<div class="ourpick">${slot}</div>`;
+  if (!id) return html`<li class="pick-row is-empty">${slot}<button type="button" class="pick-ph" onClick=${onOpen}>Pick ${idx + 1}</button></li>`;
   const st = enemy?.stats;
   const wr = st?.status === 'ok' && enemy.role ? roleWinrate(st.data, enemy.role) : null;
-  return html`<div class="ourpick">
+  return html`<li class="pick-row">
     ${slot}
+    <div class="pick-info">
+      <b>${champ(id).name}</b>
+      ${wr && html`<span class=${cx('wr-line', wrClass(wr.wr))}
+        title=${`${champ(id).name} en ${ROLE_LABEL[enemy.role]} : ${pct(wr.wr)} de victoires sur ${wr.games.toLocaleString('fr-FR')} parties (U.GG)`}>${pct(wr.wr)} WR</span>`}
+    </div>
     <select class="mini-select" value=${enemy?.auto ? '' : enemy?.role || ''} aria-label="Rôle du pick adverse"
+      title="Rôle joué par ce pick adverse (auto = deviné)"
       onChange=${(e) => actions.setEnemyRole(idx, e.currentTarget.value || null)}>
-      <option value="">${enemy?.auto && enemy.role ? `Auto · ${ROLE_LABEL[enemy.role]}` : 'Auto'}</option>
+      <option value="">${enemy?.auto && enemy.role ? `${ROLE_LABEL[enemy.role]} (auto)` : 'Auto'}</option>
       ${ROLES.map((r) => html`<option value=${r}>${ROLE_LABEL[r]}</option>`)}
     </select>
-    ${st?.status === 'loading' && html`<span class="wr-line muted">…</span>`}
-    ${st?.status === 'error' && html`<span class="wr-line muted" title="Stats indisponibles">—</span>`}
-    ${st?.status === 'ok' && html`<span class=${cx('wr-line', wr && wrClass(wr.wr))}
-      title=${wr ? `${champ(id).name} en ${ROLE_LABEL[enemy.role]} : ${pct(wr.wr)} de victoires sur ${wr.games.toLocaleString('fr-FR')} parties` : 'Presque jamais joué à ce rôle'}>
-      ${wr ? pct(wr.wr) : 'rare'}
-    </span>`}
-  </div>`;
+  </li>`;
 }
 
 function OurPick({ idx, value, players, actions, autoPlayer, onOpen }) {
   const id = value?.champ;
-  const auto = id && !value.player ? autoPlayer(id) : null;
-  return html`<div class="ourpick">
-    <${Slot} kind="pick" id=${id} label=${`Notre pick ${idx + 1}`} onOpen=${onOpen} onClear=${() => actions.clearOurPick(idx)} />
-    ${id && html`<select class="mini-select" value=${value.player || ''} aria-label="Joueur qui joue ce champion"
+  const slot = html`<${Slot} kind="pick" id=${id} label=${`Notre pick ${idx + 1}`} onOpen=${onOpen} onClear=${() => actions.clearOurPick(idx)} />`;
+  if (!id) return html`<li class="pick-row is-empty">${slot}<button type="button" class="pick-ph" onClick=${onOpen}>Pick ${idx + 1}</button></li>`;
+  const auto = !value.player ? autoPlayer(id) : null;
+  return html`<li class="pick-row">
+    ${slot}
+    <div class="pick-info"><b>${champ(id).name}</b></div>
+    <select class="mini-select" value=${value.player || ''} aria-label="Joueur qui joue ce champion" title="Qui joue ce champion (auto = d’après la meilleure compo)"
       onChange=${(e) => actions.setOurPickPlayer(idx, e.currentTarget.value || null)}>
-      <option value="">${auto ? `Auto · ${auto.name}` : 'Auto'}</option>
+      <option value="">${auto ? `${auto.name} (auto)` : 'Auto'}</option>
       ${players.map((p) => html`<option value=${p.id}>${p.name}</option>`)}
-    </select>`}
-  </div>`;
+    </select>
+  </li>`;
 }
 
 function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef }) {
@@ -159,16 +144,11 @@ function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef }) {
   };
 
   return html`<div class="quick">
-    <div class="seg seg-target" role="group" aria-label="Ajouter en tant que">
-      ${DRAFT_GROUPS.map((g) => html`<button type="button" class=${cx(target === g && 'on', `g-${g}`)}
-        onClick=${() => { setTarget(g); inputRef.current?.focus(); }}>
-        ${GROUP_LABEL[g]} <span class="count">${filled(g)}/5</span>
-      </button>`)}
-    </div>
     <div class="quick-search">
       <label class="search">
         <${Icon} name="search" size=${17} />
-        <input ref=${inputRef} value=${query} placeholder=${`${GROUP_LABEL[target]} : tape un champion puis Entrée  ( / pour focus )`}
+        <input ref=${inputRef} value=${query} placeholder=${`${GROUP_LABEL[target]} : tape un champion…`}
+          title="Tape un nom puis Entrée. Raccourcis : / pour venir ici, Tab pour changer de catégorie."
           onInput=${(e) => { setQuery(e.currentTarget.value); setHi(0); }} onKeyDown=${onKeyDown}
           aria-label="Ajouter un champion à la draft" autocomplete="off" spellcheck="false" />
       </label>
@@ -182,6 +162,12 @@ function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef }) {
           </button>
         </li>`)}
       </ul>`}
+    </div>
+    <div class="seg seg-target" role="group" aria-label="Ajouter en tant que">
+      ${DRAFT_GROUPS.map((g) => html`<button type="button" class=${cx(target === g && 'on', `g-${g}`)}
+        onClick=${() => { setTarget(g); inputRef.current?.focus(); }}>
+        ${GROUP_LABEL[g]}${filled(g) ? html` <span class="count">${filled(g)}</span>` : ''}
+      </button>`)}
     </div>
   </div>`;
 }

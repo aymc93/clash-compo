@@ -392,28 +392,27 @@ export function App({ store, room }) {
     </div>`}
     ${snap.error && html`<div class="banner banner-error"><${Icon} name="alert" size=${16} /><span>${snap.error}</span></div>`}
 
-    <main class="main">
+    <main class=${cx('main', snap.loaded && tab === 'draft' && 'is-workspace')}>
       ${!snap.loaded
         ? html`<div class="loading-room"><span class="spinner"></span><p class="muted">Connexion à l’équipe…</p></div>`
         : tab === 'draft'
-        ? html`
-          <${DraftBoard} draft=${draft} players=${active} actions=${actions} usedAll=${usedAll} owners=${owners}
-            autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef}
-            enemies=${enemies} />
+        ? html`<div class="workspace">
+          <aside class="col col-draft" aria-label="Draft">
+            <${DraftBoard} draft=${draft} players=${active} actions=${actions} usedAll=${usedAll} owners=${owners}
+              autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef}
+              enemies=${enemies} />
+          </aside>
           <${CompsView} result=${result} weight=${weight} selected=${selectedIndex}
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
             priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
             enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw}
-            mode=${compMode} onMode=${setCompMode} withStats=${withStats} />`
+            mode=${compMode} onMode=${setCompMode} withStats=${withStats} />
+        </div>`
         : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi}
             unavailable=${unavailable} onAdd=${(playerId, role) => setPicker({ mode: 'pool', playerId, role })}
             onEdit=${(playerId, champId) => setEditing({ playerId, champId })} onAddPlayer=${() => setAddingPlayer(true)} />`}
     </main>
 
-    <footer class="footer">
-      <span>Patch ${patchLabel()} · ${plural(players.length, 'joueur')} · équipe <code>${room}</code></span>
-      <span class="legal">Clash Compo n’est pas approuvé par Riot Games et ne reflète pas les opinions de Riot Games ou de toute personne officiellement impliquée dans la production ou la gestion des propriétés de Riot Games. Riot Games et toutes les propriétés associées sont des marques commerciales ou des marques déposées de Riot Games, Inc.</span>
-    </footer>
 
     ${pickerProps && html`<${ChampionPicker} open=${true} onClose=${() => setPicker(null)} ...${pickerProps} />`}
     <${PoolEditor} open=${!!editingPlayer} player=${editingPlayer} champId=${editing?.champId} onClose=${() => setEditing(null)} actions=${actions} />
@@ -625,6 +624,11 @@ function SettingsModal({ open, onClose, state, weight, limit, actions, room, mod
           <button type="button" class="btn btn-ghost" onClick=${onIdentity}><${Icon} name="user" size=${16} /> Changer de pseudo / d’identité</button>
         </div>
         <p class="muted small">Synchro : <b>${mode === 'firebase' ? (status === 'live' ? 'Firebase, en direct' : 'Firebase, connexion…') : 'locale (ce navigateur uniquement)'}</b> · Équipe : <code>${room}</code> · Patch ${patchLabel()}</p>
+      </section>
+      <section>
+        <h4>À propos</h4>
+        <p class="muted small">Winrates des matchups : U.GG. Stats des joueurs : DeepLoL. Images : Riot Data Dragon.</p>
+        <p class="muted tiny legal">Clash Compo n’est pas approuvé par Riot Games et ne reflète pas les opinions de Riot Games ou de toute personne officiellement impliquée dans la production ou la gestion des propriétés de Riot Games. Riot Games et toutes les propriétés associées sont des marques commerciales ou des marques déposées de Riot Games, Inc.</p>
       </section>
     </div>
   <//>`;

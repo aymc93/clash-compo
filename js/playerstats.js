@@ -166,9 +166,9 @@ export const champStats = (ps, id, role = 'all') => unpack(ps?.champs?.[id]?.[ro
 export function perfValue(st) {
   if (!st || !st.games) return 0;
   const exp = Math.min(1, Math.log(1 + st.games) / Math.log(41)); // 40 parties = expérience max
-  const wrS = (st.wins + 5) / (st.games + 10); // peu de parties → ramené vers 50 %
+  const wrS = (st.wins + 10) / (st.games + 20); // peu de parties → ramené vers 50 %
   const wrPts = Math.max(-3, Math.min(3, (wrS - 0.5) * 100 * 0.3));
-  const kdaPts = Math.max(-1, Math.min(1, (st.kda - 2.5) * 0.5));
+  const kdaPts = Math.max(-1, Math.min(1, (st.kda - 2.5) * 0.5)) * Math.min(1, st.games / 10);
   return Math.max(0, Math.min(10, 2 + 6 * exp + wrPts + kdaPts));
 }
 

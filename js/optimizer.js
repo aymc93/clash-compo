@@ -53,7 +53,7 @@ function quickBalance(picks) {
 export const maxScore = (weight) => MAX_COMFORT + MAX_BALANCE * weight;
 
 // Mode « stats » : champion hors pool retenu seulement avec assez de parties à ce rôle.
-export const STATS_MIN_GAMES = 3;
+export const STATS_MIN_GAMES = 5;
 // Champion du pool sans aucune partie classée à ce rôle (alors que le joueur a des stats).
 const NO_GAMES_PENALTY = 1.5;
 
@@ -71,7 +71,11 @@ export function pickValue(tier, ps, id, role) {
   if (st && st.games) {
     if (!tv && st.games < STATS_MIN_GAMES) return null;
     const pv = perfValue(st);
-    return { base: tv ? (tv + pv) / 2 : pv, tier: tier || 0, perf: st, fromStats: !tv };
+    // Confiance dans les stats : pleine à partir de 20 parties. Quelques parties ne suffisent
+    // pas à écraser le niveau déclaré, ni à faire passer un champion hors pool devant un main.
+    const conf = Math.min(1, st.games / 20);
+    const base = tv ? tv + (pv - tv) * 0.5 * conf : pv * (0.6 + 0.4 * conf);
+    return { base, tier: tier || 0, perf: st, fromStats: !tv };
   }
   return tv ? { base: Math.max(1, tv - NO_GAMES_PENALTY), tier, perf: null, fromStats: false } : null;
 }
