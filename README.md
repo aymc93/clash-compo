@@ -109,7 +109,7 @@ Les rôles habituels et le profil (AD/AP, frontline, engage) de chaque champion 
 - En haut de la colonne Draft, l'**étape en cours** suit l'ordre officiel (B1, R1, B2… puis R1-R2, B2-B3…) : « À nous de bannir : Maître Yi » ou « À nous de pick : Annie » avec un bouton pour le faire. La recherche passe toute seule sur la bonne catégorie.
 
 ### Onglet « Historique »
-- En bas de la colonne Draft, **Victoire** / **Défaite** (double clic) enregistre la compo jouée et vide la draft.
+- Sous la compo, **Victoire** / **Défaite** (double clic) enregistre la compo jouée et vide la draft.
 - L'onglet affiche le winrate global, le bilan de chaque joueur (et de ses champions), le bilan des compos gardées et la liste des parties.
 
 ### Dispos, rang, champions à travailler, Discord

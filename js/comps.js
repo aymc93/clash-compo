@@ -5,23 +5,22 @@ import { cx, lsGet, lsSet, plural, signed } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, champ, iconUrl, loadingUrl, splashUrl } from './data.js';
 import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
-import { ChampIcon, ConfirmButton, EditableText, Icon, RoleIcon, TierPill, toast } from './ui.js';
+import { ChampIcon, ConfirmButton, EditableText, Icon, Modal, RoleIcon, TierPill, toast } from './ui.js';
 import { kdaTxt } from './playerstats.js';
 import { copyText, discordText, recordTxt } from './insights.js';
+import { GameEnd } from './draft.js';
 
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
 
 const compSig = (slots) => ROLES.map((r) => `${slots[r]?.champ}:${slots[r]?.player}`).join('|');
-const OPTIONS_SHOWN = 4;
 
 /** Rend deux colonnes : la compo (centre) et le panneau latéral. */
-export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0, bans = [], records = {}, teamName = 'Mon équipe' }) {
+export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0, bans = [], records = {}, teamName = 'Mon équipe', onRecord }) {
   const comps = result.comps;
   const [showAll, setShowAll] = useState(false);
   const savedSigs = new Map(saved.map(({ item }) => [compSig(item.slots || {}), item.name]));
   const current = comps.length ? comps[Math.min(selected, comps.length - 1)] : null;
   const rank = current ? comps.indexOf(current) : -1;
-  const options = showAll ? comps : comps.slice(0, OPTIONS_SHOWN);
 
   const center = html`<section class="col col-center" aria-label="Compos proposées">
     <div class="col-head">
@@ -30,22 +29,26 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
     </div>
     ${current
       ? html`
-        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} teamName=${teamName}
+        <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} teamName=${teamName} onRecord=${onRecord}
           mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
         ${comps.length > 1 && html`<div class="options">
           <div class="options-head">
             <h3>Autres options</h3>
-            <span class="muted tiny">une répartition des rôles par ligne</span>
+            <span class="muted tiny" title=${result.truncated ? 'Beaucoup de possibilités : recherche limitée, résultats très bons mais peut-être pas parfaits.' : ''}>une répartition des rôles chacune</span>
+            <button type="button" class="link-btn options-more" onClick=${() => setShowAll(true)}>Voir les ${comps.length}</button>
           </div>
           <div class="options-list">
-            ${options.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
+            ${comps.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
               weight=${weight} onClick=${() => onSelect(i)} />`)}
           </div>
-          ${comps.length > OPTIONS_SHOWN && html`<button type="button" class="link-btn options-more" onClick=${() => setShowAll(!showAll)}>
-            ${showAll ? 'Afficher moins' : `Voir les ${comps.length - OPTIONS_SHOWN} autres`}
-          </button>`}
         </div>`}
-        ${result.truncated && html`<p class="hint">Beaucoup de possibilités : recherche limitée, les résultats sont très bons mais peut-être pas parfaits.</p>`}`
+        ${showAll && html`<${Modal} open=${true} onClose=${() => setShowAll(false)} title="Toutes les options" size="lg"
+          subtitle="Une répartition des rôles par ligne. Clique sur une option pour l’afficher en grand.">
+          <div class="options-all">
+            ${comps.map((c, i) => html`<${CompMini} key=${c.key} comp=${c} rank=${i} active=${c === current} best=${comps[0].score}
+              weight=${weight} onClick=${() => { onSelect(i); setShowAll(false); }} />`)}
+          </div>
+        <//>`}`
       : html`<${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} />`}
   </section>`;
 
@@ -130,7 +133,7 @@ function ModeSwitch({ mode, onMode, withStats, total, onGoPlayers }) {
   </div>`;
 }
 
-function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName, teamName }) {
+function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName, teamName, onRecord }) {
   const r = rating(comp.score, weight);
   const bal = comp.balance;
   const stats = mode === 'stats';
@@ -150,7 +153,9 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
   ].filter(Boolean).join('\n');
   return html`<article class="hero">
     <header class="hero-head">
-      <div class="hero-chips"><${BalanceChips} b=${bal} /></div>
+      <div class="hero-chips"><${BalanceChips} b=${bal} />
+        ${comp.bench.length > 0 && html`<span class="chip-stat" title="Pas dans cette compo"><${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b></span>`}
+      </div>
       <div class=${cx('score', scoreClass(r))} title=${scoreTip}><b>${r}</b><span>/100</span></div>
     </header>
     <div class="hero-slots">
@@ -158,9 +163,7 @@ function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, sav
         locked=${lockedChamps.has(s.champ)} onToggleLock=${() => actions.toggleLock(s.champ, s.player.id)} />`)}
     </div>
     <footer class="hero-foot">
-      <span class="muted small">
-        ${comp.bench.length > 0 && html`<${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b>`}
-      </span>
+      <${GameEnd} onRecord=${onRecord} canRecord=${true} />
       <div class="hero-actions">
       <button type="button" class="btn btn-ghost" onClick=${share} title="Copier la compo en texte, prêt à coller sur Discord">
         <${Icon} name="link" size=${15} /> Copier pour Discord

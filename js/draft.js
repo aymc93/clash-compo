@@ -41,24 +41,13 @@ export function DraftBoard({ draft = {}, players, actions, usedAll, owners, auto
     <${Team} label="Eux" side=${enemySide} bans=${slotValues(draft.enemyBans)} picks=${slotValues(draft.enemyPicks)}
       banGroup="enemyBans" pickGroup="enemyPicks" players=${players} actions=${actions} owners=${owners} openSlot=${openSlot} enemies=${enemies} />
 
-    <div class="game-end">
-      <span class="muted small">Fin de partie</span>
-      <${ConfirmButton} class="btn btn-ghost btn-sm res-win" onConfirm=${() => onRecord(true)} confirmLabel="Noter la victoire ?"
-        title=${canRecord ? 'Enregistre la compo jouée dans l’historique, puis vide la draft' : 'Il faut une compo pour noter le résultat'}>
-        <${Icon} name="crown" size=${14} /> Victoire
-      <//>
-      <${ConfirmButton} class="btn btn-ghost btn-sm res-loss" onConfirm=${() => onRecord(false)} confirmLabel="Noter la défaite ?"
-        title=${canRecord ? 'Enregistre la compo jouée dans l’historique, puis vide la draft' : 'Il faut une compo pour noter le résultat'}>
-        Défaite
-      <//>
-    </div>
   </div>`;
 }
 
 /** Étape en cours de la draft (ordre officiel) + ce qu'on conseille de faire. */
 function StepCard({ step, suggest, actions }) {
   if (!step) {
-    return html`<div class="step-card is-done"><b>Draft terminée</b><span class="muted tiny">Bonne game ! Note le résultat en bas de la colonne.</span></div>`;
+    return html`<div class="step-card is-done"><b>Draft terminée</b><span class="muted tiny">Bonne game ! Note le résultat sous la compo.</span></div>`;
   }
   const ours = step.ours;
   const title = ours
@@ -83,10 +72,12 @@ function StepCard({ step, suggest, actions }) {
 
 function Team({ label, side, ours, bans, picks, banGroup, pickGroup, players, actions, owners, autoPlayer, openSlot, enemies }) {
   return html`<section class=${cx('team', `side-${side}`, ours && 'is-ours')}>
-    <header class="team-head"><span class="side-dot"></span><b>${label}</b></header>
+    <div class="team-top">
+    <header class="team-head" title=${ours ? 'Notre équipe' : 'Équipe adverse'}><span class="side-dot"></span><b>${label}</b></header>
     <div class="team-bans" aria-label=${`Bans ${label}`}>
       ${bans.map((id, i) => html`<${Slot} key=${i} kind="ban" id=${id} label=${`${GROUP_LABEL[banGroup]} ${i + 1}`}
         onOpen=${() => openSlot(banGroup, i)} onClear=${() => actions.setSlot(banGroup, i, null)} owners=${id ? owners(id) : ''} />`)}
+    </div>
     </div>
     <ol class="team-picks">
       ${picks.map((v, i) => (ours
@@ -124,7 +115,7 @@ function EnemyPick({ idx, id, enemy, actions, onOpen, owners }) {
     <div class="pick-info">
       <b>${champ(id).name}</b>
       ${wr && html`<span class=${cx('wr-line', wrClass(wr.wr))}
-        title=${`${champ(id).name} en ${ROLE_LABEL[enemy.role]} : ${pct(wr.wr)} de victoires sur ${wr.games.toLocaleString('fr-FR')} parties (U.GG)`}>${pct(wr.wr)} WR</span>`}
+        title=${`${champ(id).name} en ${ROLE_LABEL[enemy.role]} : ${pct(wr.wr)} de victoires sur ${wr.games.toLocaleString('fr-FR')} parties (U.GG)`}>${pct(wr.wr, 0)}</span>`}
     </div>
     <select class="mini-select" value=${enemy?.auto ? '' : enemy?.role || ''} aria-label="Rôle du pick adverse"
       title="Rôle joué par ce pick adverse (auto = deviné)"
@@ -150,6 +141,8 @@ function OurPick({ idx, value, players, actions, autoPlayer, onOpen }) {
     </select>
   </li>`;
 }
+
+const SHORT_LABEL = { enemyBans: 'Ban eux', ourBans: 'Ban nous', enemyPicks: 'Pick eux', ourPicks: 'Pick nous' };
 
 function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef, stepGroup }) {
   const [target, setTarget] = useState(stepGroup || 'enemyBans');
@@ -208,10 +201,22 @@ function QuickAdd({ draft, actions, usedAll, owners, filled, inputRef, stepGroup
       </ul>`}
     </div>
     <div class="seg seg-target" role="group" aria-label="Ajouter en tant que">
-      ${DRAFT_GROUPS.map((g) => html`<button type="button" class=${cx(target === g && 'on', `g-${g}`)}
+      ${DRAFT_GROUPS.map((g) => html`<button type="button" class=${cx(target === g && 'on', `g-${g}`)} title=${GROUP_LABEL[g]}
         onClick=${() => { setTarget(g); inputRef.current?.focus(); }}>
-        ${GROUP_LABEL[g]}${filled(g) ? html` <span class="count">${filled(g)}</span>` : ''}
+        ${SHORT_LABEL[g]}
       </button>`)}
     </div>
+  </div>`;
+}
+
+/** Boutons de fin de partie (affichés sous la compo). */
+export function GameEnd({ onRecord, canRecord }) {
+  const tip = canRecord ? 'Enregistre la compo jouée dans l’historique, puis vide la draft' : 'Il faut une compo pour noter le résultat';
+  return html`<div class="game-end">
+    <span class="muted small">Fin de partie :</span>
+    <${ConfirmButton} class="btn btn-ghost btn-sm res-win" onConfirm=${() => onRecord(true)} confirmLabel="Noter la victoire ?" title=${tip}>
+      <${Icon} name="crown" size=${14} /> Victoire
+    <//>
+    <${ConfirmButton} class="btn btn-ghost btn-sm res-loss" onConfirm=${() => onRecord(false)} confirmLabel="Noter la défaite ?" title=${tip}>Défaite<//>
   </div>`;
 }

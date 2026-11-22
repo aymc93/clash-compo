@@ -63,7 +63,7 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
 
   return html`<article class=${cx('pcard', bench && 'is-bench', isMe && 'is-me')} style=${{ '--pc': p.color }}>
     <header class="pcard-head">
-      <${Avatar} name=${p.name} color=${p.color} size=${40} online=${online} />
+      <${Avatar} name=${p.name} color=${p.color} size=${34} online=${online} />
       <div class="pcard-id">
         <${EditableText} value=${p.name} onCommit=${(v) => actions.renamePlayer(p.id, v)} class="pcard-name" ariaLabel="Pseudo du joueur" />
         <div class="pcard-sub">
@@ -88,7 +88,7 @@ function PlayerCard({ p, actions, isMe, online, unavailable, onAdd, onEdit, ps, 
         <div class="role-champs">
           ${list.map(({ id, tier }) => {
             const st = ps ? champStats(ps, id, r) : null;
-            return html`<${ChampIcon} key=${id} id=${id} size=${40} tier=${tier} banned=${unavailable.has(id)}
+            return html`<${ChampIcon} key=${id} id=${id} size=${34} tier=${tier} banned=${unavailable.has(id)}
               onClick=${() => onEdit(p.id, id)}
               title=${`${champ(id).name} · ${TIER_LETTER[tier]} (${TIER_NAME[tier]})${st ? ` — ${statLine(st)} en ${ROLE_LABEL[r]}` : ps ? ` — aucune partie classée en ${ROLE_LABEL[r]} cette saison` : ''}${unavailable.has(id) ? ' — indisponible dans la draft' : ''}`}>
               ${st && html`<span class=${cx('champ-wr', wrClass(st.wr))}>${Math.round(st.wr * 100)}</span>`}
@@ -234,6 +234,9 @@ function RiotPanel({ p, ps, accounts, actions, onRefresh, onImport }) {
     setAdding(false);
   };
   const loading = accounts.some((a) => a.status === 'loading');
+  const [expanded, setExpanded] = useState(false);
+  const errors = accounts.filter((a) => a.status === 'error').length;
+  const collapsed = accounts.length > 1 && !expanded;
   const total = ps ? unpack(ps.total) : null;
   const main = ps ? mainRole(ps) : null;
   const region = (pf) => (pf === DEFAULT_PLATFORM ? '' : ` · ${(PLATFORMS.find((x) => x[0] === pf) || [, pf])[1]}`);
@@ -250,7 +253,12 @@ function RiotPanel({ p, ps, accounts, actions, onRefresh, onImport }) {
       </div>
     </div>`}
 
-    ${accounts.length > 0 && html`<ul class="acc-list">
+    ${collapsed && html`<button type="button" class="acc-summary" onClick=${() => setExpanded(true)} title="Afficher les comptes">
+      <span>${accounts.map((a) => a.acc.name).join(', ')}</span>
+      ${errors > 0 && html`<span class="warn"><${Icon} name="alert" size=${13} /> ${errors}</span>`}
+      <${Icon} name="chevron" size=${14} />
+    </button>`}
+    ${accounts.length > 0 && !collapsed && html`<ul class="acc-list">
       ${accounts.map(({ acc, status, ps: aps, message, code }) => {
         const t = aps ? unpack(aps.total) : null;
         return html`<li key=${acc.id} class=${cx('acc', status === 'error' && 'is-error')}>
@@ -287,7 +295,10 @@ function RiotPanel({ p, ps, accounts, actions, onRefresh, onImport }) {
           <button type="submit" class="btn btn-ghost btn-sm" disabled=${!parsed}>Lier</button>
           ${accounts.length > 0 && html`<button type="button" class="icon-btn icon-btn-sm" onClick=${() => { setText(''); setAdding(false); }} aria-label="Annuler"><${Icon} name="x" size=${14} /></button>`}
         </form>`
-      : html`<button type="button" class="link-btn acc-add" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${13} /> Ajouter un compte (smurf…)</button>`}
+      : !collapsed && html`<div class="acc-tools">
+          <button type="button" class="link-btn acc-add" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${13} /> Ajouter un compte</button>
+          ${accounts.length > 1 && html`<button type="button" class="link-btn acc-add" onClick=${() => setExpanded(false)}>Replier</button>`}
+        </div>`}
 
     ${total && html`<div class="riot-sum">
       ${ps.accounts > 1 && html`<span class="riot-sum-label">Total des ${ps.accounts} comptes</span>`}

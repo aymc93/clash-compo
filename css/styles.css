@@ -901,7 +901,7 @@ select:hover { border-color: var(--line-3); }
 .settings .legal { font-size: 11.5px; }
 
 /* ── Écrans plus étroits (portables, petites fenêtres) ─────────────────── */
-@media (max-width: 1500px) {
+@media (max-width: 1280px) {
   .main.is-workspace { overflow-y: auto; }
   .workspace { height: auto; min-height: 100%; grid-template-columns: clamp(290px, 27vw, 360px) minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .col { overflow: visible; }
@@ -1055,6 +1055,115 @@ select:hover { border-color: var(--line-3); }
   .hist-summary { grid-template-columns: 1fr; }
   .game { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Draft & compos : tout tient dans l'écran, sans défilement (≥ 1281 px)
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 1281px) {
+  .workspace { grid-template-columns: clamp(270px, 20vw, 400px) minmax(0, 1fr) clamp(260px, 18vw, 380px); }
+  .workspace .col { overflow: hidden; padding-top: 14px; padding-bottom: 14px; display: flex; flex-direction: column; }
+
+  /* Colonne draft : les picks se partagent la hauteur disponible */
+  .draft { flex: 1; min-height: 0; gap: 10px; }
+  .step-card { padding: 8px 10px; gap: 4px; flex: none; }
+  .step-title { font-size: 14px; }
+  .quick { gap: 6px; flex: none; }
+  .quick-search .search input { height: 36px; }
+  .team { flex: 1 1 0; min-height: 0; padding: 10px; gap: 8px; }
+  .team-bans { flex: none; }
+  .team-bans .slot-ban { max-width: 40px; }
+  .team-picks { flex: 1; min-height: 0; display: grid; grid-template-rows: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .pick-row { min-height: 0; height: 100%; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+  .pick-row .slot-pick { width: auto; height: 100%; max-height: 40px; min-height: 22px; aspect-ratio: 1; }
+  .pick-row .slot-pick .slot-img img { transform: scale(1.06); }
+  .pick-ph { height: 100%; font-size: 12.5px; }
+  .pick-row .mini-select { height: min(28px, 100%); }
+  .game-end { flex: none; padding-top: 8px; }
+
+  /* Colonne compo : cartes à la hauteur de l'écran, une seule ligne d'options */
+  .col-center { gap: 12px; }
+  .hero { gap: 10px; flex: none; }
+  .hero-slots .sc-art { height: auto; aspect-ratio: 0.5; max-height: max(170px, calc(100dvh - 400px)); }
+  .hero-foot { min-height: 36px; }
+  .options { gap: 8px; flex: none; }
+  .options-list { grid-template-rows: auto; grid-auto-rows: 0; row-gap: 0; overflow: hidden; }
+  .options-list .mini { padding-top: 6px; padding-bottom: 6px; }
+
+  /* Colonne infos : seule la liste défile si elle est vraiment trop longue */
+  .side-tabs { flex: none; margin-bottom: 10px; }
+  .side-tabs button { font-size: 12px; padding: 0 4px; gap: 4px; }
+  .side-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+}
+
+/* Icônes « autres choix » sous les cartes : plus rien de coupé */
+.sc-alts { overflow-x: clip; overflow-y: visible; overflow-clip-margin: 8px; padding: 2px 2px 6px; min-height: 36px; }
+.options-head { align-items: center; }
+.options-more { margin-left: auto; font-size: 12.5px; }
+.options-all { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 8px; }
+
+/* ── Cartes joueurs plus compactes ─────────────────────────────────────── */
+.pcard-head { padding: 12px 14px 8px; gap: 10px; }
+.pcard-name { font-size: 16px; }
+.pcard-sub { font-size: 12px; }
+.riot-panel { margin: 0 14px 4px; padding: 6px 8px 8px; }
+.riot-head { min-height: 26px; }
+.acc-list { margin-top: 4px; gap: 3px; }
+.acc { padding: 1px 2px 1px 8px; }
+.acc-summary { width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 5px 8px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); text-align: left; }
+.acc-summary > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-summary .warn { display: inline-flex; align-items: center; gap: 3px; color: #ffcf7d; }
+.acc-summary:hover { border-color: var(--line-3); color: var(--text); }
+.acc-tools { display: flex; justify-content: space-between; gap: 8px; }
+.acc-add { margin-top: 5px; }
+.riot-panel .riot-form { margin-top: 6px; }
+.riot-sum { margin-top: 6px; padding-top: 6px; }
+.riot-stats { gap: 4px 14px; }
+.rs b { font-size: 14px; }
+.rs small { font-size: 9.5px; }
+.riot-import { margin-top: 6px; }
+.pcard-roles { padding: 2px 14px 4px; }
+.role-row { grid-template-columns: 74px 1fr; gap: 8px; padding: 5px 0; }
+.role-label { font-size: 11px; gap: 5px; }
+.role-champs { gap: 9px; min-height: 34px; }
+.add-champ { width: 34px; height: 34px; border-radius: 8px; }
+.champ .champ-wr { min-width: 17px; height: 13px; font-size: 9px; line-height: 13px; left: -4px; bottom: -4px; }
+.champ .tier-dot { min-width: 15px; height: 15px; font-size: 10px; line-height: 15px; right: -4px; bottom: -4px; }
+.pcard-foot { padding: 8px 14px 10px; }
+.pcard-foot .btn-sm { height: 28px; }
+.pcard-foot select { height: 28px; }
+.pcard-add { min-height: 160px; }
+.player-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+
+/* Draft compacte : en-tête + bans sur une ligne, catégories sur une ligne */
+.team-top { display: flex; align-items: center; gap: 8px; }
+.team-top .team-head { width: 48px; flex: none; }
+.team-top .team-bans { flex: 1; min-width: 0; }
+.seg-target { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.seg-target button { font-size: 11.5px; padding: 0 2px; gap: 3px; height: 26px; }
+.seg-target button .count { min-width: 14px; height: 14px; line-height: 14px; font-size: 10px; padding: 0 3px; }
+.side-tabs { flex-wrap: nowrap; }
+.side-tabs button { min-width: 0; white-space: nowrap; overflow: hidden; }
+.hero-foot .game-end { border-top: 0; padding-top: 0; }
+.hero-foot .game-end > span { margin-right: 2px; }
+@media (max-height: 860px) {
+  .step-dots { display: none; }
+  .col-head { min-height: 28px; }
+  .workspace .col { padding-top: 10px; padding-bottom: 10px; }
+  .draft { gap: 8px; }
+}
+
+.seg-target button { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-align: center; line-height: 26px; }
+.pick-info { flex-direction: row; align-items: baseline; gap: 6px; overflow: hidden; }
+.pick-info b { flex: 0 1 auto; min-width: 0; }
+.pick-info .wr-line { flex: none; }
+@media (min-width: 1281px) {
+  .workspace { grid-template-columns: clamp(270px, 20vw, 400px) minmax(0, 1fr) clamp(280px, 18vw, 380px); }
+  .side-tabs button { flex: 1 1 auto; font-size: 11.5px; padding: 0 6px; letter-spacing: 0; }
+}
+.pick-info b { flex: 1 1 auto; min-width: 2.5em; }
+.pick-row .mini-select { max-width: 112px; font-size: 11.5px; }
+@media (min-width: 1281px) and (min-height: 1000px) { .options-list { grid-template-rows: auto auto; } }
+@media (min-width: 1281px) and (min-height: 1300px) { .options-list { grid-template-rows: auto auto auto; } }
 
 /* ── Très grands écrans : on agrandit l'interface pour garder des textes lisibles ── */
 @media (min-width: 2200px) {

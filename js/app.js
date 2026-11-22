@@ -460,13 +460,13 @@ export function App({ store, room }) {
           <aside class="col col-draft" aria-label="Draft">
             <${DraftBoard} draft=${draft} players=${active} actions=${actions} usedAll=${usedAll} owners=${owners}
               autoPlayer=${autoPlayer} openSlot=${(group, idx) => setPicker({ mode: 'draft', group, idx })} quickRef=${quickRef}
-              enemies=${enemies} suggest=${draftSuggest} onRecord=${recordGame} canRecord=${!!best} />
+              enemies=${enemies} suggest=${draftSuggest} />
           </aside>
           <${CompsView} result=${result} weight=${weight} selected=${selectedIndex}
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
             priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
             enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw}
-            mode=${compMode} onMode=${setCompMode} withStats=${withStats} bans=${bans} records=${records} teamName=${teamName} />
+            mode=${compMode} onMode=${setCompMode} withStats=${withStats} bans=${bans} records=${records} teamName=${teamName} onRecord=${recordGame} />
         </div>`
         : tab === 'scout'
         ? html`<${ScoutView} team=${state.scout?.team || ''} actions=${actions} unavailable=${usedAll} bans=${scoutBans}
