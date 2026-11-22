@@ -1,19 +1,24 @@
 // Résultats : compo recommandée, alternatives, priorités de pick, compos enregistrées.
 import { html } from './vendor.js';
-import { cx, signed } from './util.js';
+import { cx, plural, signed } from './util.js';
 import { ROLES, ROLE_LABEL, TIER_LETTER, champ, iconUrl, loadingUrl, splashUrl } from './data.js';
 import { pct, roleWinrate, wrClass } from './stats.js';
 import { alternatives, MAX_COMFORT, rating } from './optimizer.js';
-import { ChampIcon, ConfirmButton, EditableText, Icon, RoleIcon, TierPill } from './ui.js';
+import { ChampIcon, ConfirmButton, EditableText, Icon, RoleIcon, TierPill, toast } from './ui.js';
+import { kdaTxt } from './playerstats.js';
 
 const scoreClass = (r) => (r >= 88 ? 's-gold' : r >= 75 ? 's-green' : r >= 60 ? 's-blue' : 's-grey');
 
-export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw }) {
+const compSig = (slots) => ROLES.map((r) => `${slots[r]?.champ}:${slots[r]?.player}`).join('|');
+
+export function CompsView({ result, weight, selected, onSelect, lockedChamps, actions, priority, saved, onGoPlayers, playersCount, enemies = [], players = [], unavailable, muRaw, mode = 'tiers', onMode, withStats = 0 }) {
   const comps = result.comps;
   const matchups = html`<${MatchupPanel} enemies=${enemies} players=${players} unavailable=${unavailable} muRaw=${muRaw} />`;
+  const modeBar = html`<${ModeBar} mode=${mode} onMode=${onMode} withStats=${withStats} total=${players.length} onGoPlayers=${onGoPlayers} />`;
+  const savedSigs = new Map(saved.map(({ id, item }) => [compSig(item.slots || {}), item.name]));
   if (!comps.length) {
     return html`<div class="comps-layout">
-      <${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} />
+      <div class="comps-main">${modeBar}<${EmptyComps} reason=${result.reason} onGoPlayers=${onGoPlayers} playersCount=${playersCount} /></div>
       <aside class="comps-side">${matchups}<${SavedPanel} saved=${saved} actions=${actions} /></aside>
     </div>`;
   }
@@ -21,7 +26,9 @@ export function CompsView({ result, weight, selected, onSelect, lockedChamps, ac
   const rank = comps.indexOf(current);
   return html`<div class="comps-layout">
     <div class="comps-main">
-      <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions} />
+      ${modeBar}
+      <${CompHero} comp=${current} rank=${rank} result=${result} weight=${weight} lockedChamps=${lockedChamps} actions=${actions}
+        mode=${mode} savedName=${savedSigs.get(compSig(Object.fromEntries(current.slots.map((s) => [s.role, { champ: s.champ, player: s.player.id }]))))} />
       ${comps.length > 1 && html`<section class="comp-list">
         <div class="section-title">
           <h3>Toutes les options</h3>
@@ -60,7 +67,7 @@ function EmptyComps({ reason, onGoPlayers, playersCount }) {
       ? 'Nos picks verrouillés ne permettent pas de remplir les 5 rôles avec des joueurs différents. Vérifie les joueurs assignés aux picks.'
       : 'Chaque joueur ne peut occuper qu’un rôle : ajoutez des champions/rôles aux pools pour compléter la compo.';
   }
-  return html`<div class="comps-main"><section class="empty panel">
+  return html`<section class="empty panel">
     <div class="empty-icon"><${Icon} name="sparkles" size=${28} /></div>
     <h2>${title}</h2>
     <p class="muted">${text}</p>
@@ -70,44 +77,74 @@ function EmptyComps({ reason, onGoPlayers, playersCount }) {
       <li><b>2.</b> Pendant la draft, entrez les bans et les picks adverses.</li>
       <li><b>3.</b> Les meilleures compos s’affichent ici, en direct pour tout le monde.</li>
     </ol>
-  </section></div>`;
+  </section>`;
 }
 
-function CompHero({ comp, rank, result, weight, lockedChamps, actions }) {
+/** Choix du calcul : niveaux déclarés (S/A/B/C) ou vraies stats des joueurs (Riot ID). */
+function ModeBar({ mode, onMode, withStats, total, onGoPlayers }) {
+  const stats = mode === 'stats';
+  return html`<div class=${cx('mode-bar', stats && 'is-stats')}>
+    <div class="seg" role="group" aria-label="Calcul des compos">
+      <button type="button" class=${cx(!stats && 'on')} onClick=${() => stats && onMode('tiers')} aria-pressed=${!stats}>
+        <${Icon} name="sliders" size=${15} /> Selon nos niveaux
+      </button>
+      <button type="button" class=${cx(stats && 'on on-stats')} onClick=${() => !stats && onMode('stats')} aria-pressed=${stats}>
+        <${Icon} name="sparkles" size=${15} /> Meilleures compos selon nos stats
+      </button>
+    </div>
+    <span class="muted small mode-hint">
+      ${stats
+        ? withStats
+          ? html`Calculé avec les parties classées de la saison (${withStats}/${total} joueur${total > 1 ? 's' : ''} avec un Riot ID) : expérience, winrate et KDA de chacun sur chaque champion, même hors pool.`
+          : html`<${Icon} name="alert" size=${13} /> Aucun titulaire n’a de Riot ID : ajoute-les dans l’onglet <button type="button" class="link-btn" onClick=${onGoPlayers}>Joueurs</button>.`
+        : 'Calculé avec les niveaux S / A / B / C que vous avez renseignés.'}
+    </span>
+  </div>`;
+}
+
+function CompHero({ comp, rank, result, weight, lockedChamps, actions, mode, savedName }) {
   const r = rating(comp.score, weight);
   const bal = comp.balance;
+  const stats = mode === 'stats';
+  const keep = () => {
+    actions.saveComp(comp, mode);
+    toast({ text: 'Compo validée : elle est gardée dans « Compos enregistrées » pour toute l’équipe.', type: 'ok' });
+  };
   return html`<article class="hero panel">
     <header class="hero-head">
       <div class="hero-title">
-        <span class="eyebrow">${rank === 0 ? html`<${Icon} name="crown" size=${14} /> Meilleure compo` : `Option n°${rank + 1}`}</span>
+        <span class="eyebrow">${rank === 0 ? html`<${Icon} name="crown" size=${14} /> Meilleure compo${stats ? ' selon nos stats' : ''}` : `Option n°${rank + 1}`}</span>
         <div class="hero-chips"><${BalanceChips} b=${bal} /></div>
       </div>
-      <div class="hero-score" title="Note = confort des joueurs + équilibre de la compo">
+      <div class="hero-score" title=${stats ? 'Note = performance des joueurs (stats + niveau) + équilibre de la compo' : 'Note = confort des joueurs + équilibre de la compo'}>
         <div class=${cx('score', scoreClass(r))}><b>${r}</b><span>/100</span></div>
         <div class="score-break">
-          <span>Confort <b>${comp.comfort}</b>/${MAX_COMFORT}</span>
+          <span>${stats ? 'Perf' : 'Confort'} <b>${String(comp.comfort).replace('.', ',')}</b>/${MAX_COMFORT}</span>
           <span>Équilibre <b>${signed(bal.total * weight)}</b></span>
-          ${comp.hasMatchups && html`<span>Matchups <b>${signed(comp.matchup)}</b></span>`}
+          ${comp.hasMatchups && html`<span>Matchups <b>${signed(Math.round(comp.matchup))}</b></span>`}
         </div>
       </div>
     </header>
     <div class="hero-slots">
-      ${comp.slots.map((s, ri) => html`<${SlotCard} key=${s.role + s.champ} slot=${s} alts=${alternatives(result, comp, ri)}
+      ${comp.slots.map((s, ri) => html`<${SlotCard} key=${s.role + s.champ} slot=${s} alts=${alternatives(result, comp, ri)} stats=${stats}
         locked=${lockedChamps.has(s.champ)} onToggleLock=${() => actions.toggleLock(s.champ, s.player.id)} />`)}
     </div>
     <footer class="hero-foot">
       <span class="muted small">
         ${comp.bench.length ? html`<${Icon} name="user" size=${14} /> Remplaçant${comp.bench.length > 1 ? 's' : ''} : <b>${comp.bench.map((p) => p.name).join(', ')}</b>` : html`<${Icon} name="info" size=${14} /> Les petites icônes = autres choix du joueur à ce poste.`}
       </span>
-      <button type="button" class="btn btn-ghost btn-sm" onClick=${() => actions.saveComp(comp)}>
-        <${Icon} name="bookmark" size=${15} /> Enregistrer cette compo
-      </button>
+      ${savedName
+        ? html`<span class="kept"><${Icon} name="check" size=${16} /> Compo gardée · <b>${savedName}</b></span>`
+        : html`<button type="button" class="btn btn-gold btn-sm" onClick=${keep} title="Garder cette compo dans « Compos enregistrées » (visible par toute l’équipe)">
+            <${Icon} name="check" size=${16} /> Valider et garder cette compo
+          </button>`}
     </footer>
   </article>`;
 }
 
-function SlotCard({ slot, alts, locked, onToggleLock }) {
+function SlotCard({ slot, alts, locked, onToggleLock, stats }) {
   const c = champ(slot.champ);
+  const pf = slot.perf;
   return html`<div class=${cx('slot-card', locked && 'is-locked')} style=${{ '--pc': slot.player.color }}>
     <div class="sc-art">
       <img key=${slot.champ} src=${loadingUrl(slot.champ)} alt="" loading="lazy" draggable="false"
@@ -125,15 +162,22 @@ function SlotCard({ slot, alts, locked, onToggleLock }) {
           title=${`${c.name} contre ${champ(slot.mu.vs).name} : ${pct(slot.mu.wr)} de victoires (${slot.mu.games.toLocaleString('fr-FR')} parties)`}>
           <img src=${iconUrl(slot.mu.vs)} alt="" /> vs · ${pct(slot.mu.wr)}
         </span>`}
-        <${TierPill} tier=${slot.tier} off=${slot.off} />
+        ${slot.fromStats
+          ? html`<span class="tier-pill off stats" title="Pas dans son pool, mais il le joue en classé">Ses stats</span>`
+          : html`<${TierPill} tier=${slot.tier} off=${slot.off} />`}
         <h3 class="sc-name">${c.name}</h3>
         <span class="sc-player"><span class="dot"></span>${slot.player.name}</span>
+        ${stats && (pf
+          ? html`<span class="sc-perf" title=${`${slot.player.name} sur ${c.name} en ${ROLE_LABEL[slot.role]} (classé, saison en cours) : ${plural(pf.games, 'partie')}, ${pct(pf.wr)} de victoires, KDA ${kdaTxt(pf.kda)} (${kdaTxt(pf.k)}/${kdaTxt(pf.d)}/${kdaTxt(pf.a)}), ${kdaTxt(pf.cs)} CS/min`}>
+              <b>${pf.games}</b> p. · <b class=${wrClass(pf.wr)}>${pct(pf.wr, 0)}</b> · <b>${kdaTxt(pf.kda)}</b> KDA
+            </span>`
+          : html`<span class="sc-perf muted">Pas de partie classée</span>`)}
       </div>
     </div>
     <div class="sc-alts">
       ${alts.length
         ? alts.map((a) => html`<${ChampIcon} key=${a.champ} id=${a.champ} size=${28} tier=${a.tier}
-            title=${`Sinon : ${champ(a.champ).name} (${TIER_LETTER[a.tier]})${a.mu ? ` — ${pct(a.mu.wr)} contre ${champ(a.mu.vs).name}` : ''}`} />`)
+            title=${`Sinon : ${champ(a.champ).name} (${a.tier ? TIER_LETTER[a.tier] : 'hors pool'})${a.perf ? ` — ${plural(a.perf.games, 'partie')}, ${pct(a.perf.wr, 0)}` : ''}${a.mu ? ` — ${pct(a.mu.wr)} contre ${champ(a.mu.vs).name}` : ''}`} />`)
         : html`<span class="muted tiny">Pas d’autre choix</span>`}
     </div>
   </div>`;
@@ -168,7 +212,7 @@ function CompMini({ comp, rank, active, best, weight, onClick }) {
     </div>
     <div class="mini-slots">
       ${comp.slots.map((s) => html`<div class="mini-slot" key=${s.role}>
-        <${ChampIcon} id=${s.champ} size=${42} tier=${s.off ? null : s.tier} />
+        <${ChampIcon} id=${s.champ} size=${42} tier=${s.off || !s.tier ? null : s.tier} />
         <span class="mini-player" style=${{ color: s.player.color }} title=${`${s.player.name} · ${ROLE_LABEL[s.role]}`}>${s.player.name}</span>
       </div>`)}
     </div>
@@ -256,6 +300,7 @@ function SavedPanel({ saved, actions }) {
         ${saved.map(({ id, item, ev }) => html`<li class=${cx('saved-item', !ev.ok && 'is-broken')} key=${id}>
           <div class="saved-head">
             <${EditableText} value=${item.name} onCommit=${(v) => actions.renameSaved(id, v)} class="saved-name" ariaLabel="Nom de la compo" />
+            ${item.mode === 'stats' && html`<span class="tag tag-stats" title="Proposée d’après les stats des joueurs">Stats</span>`}
             <span class=${cx('saved-status', ev.ok ? scoreClass(ev.rating) : 'ko')}>${ev.ok ? `${ev.rating}/100` : 'Cassée'}</span>
             <${ConfirmButton} class="icon-btn icon-btn-sm" onConfirm=${() => actions.removeSaved(id)} confirmLabel=${html`<${Icon} name="check" size=${14} />`} title="Supprimer">
               <${Icon} name="trash" size=${14} />

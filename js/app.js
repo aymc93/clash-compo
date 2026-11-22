@@ -10,6 +10,53 @@ import { PlayersView, PoolEditor } from './players.js';
 import { DraftBoard } from './draft.js';
 import { CompsView } from './comps.js';
 import { DEFAULT_STATS, STAT_RANKS, STAT_REGIONS, loadChampionStats, matchup, matchupPoints } from './stats.js';
+import { STATS_TTL, fetchPlayerStats, riotKey } from './playerstats.js';
+
+/**
+ * Stats DeepLoL des joueurs qui ont renseigné leur Riot ID.
+ * Le résumé est enregistré dans l'équipe (pstats/{joueur}) : un seul membre le télécharge,
+ * tout le monde le voit. Rafraîchi automatiquement au bout de STATS_TTL.
+ */
+function usePlayerStats(players, pstats, actions, loaded) {
+  const [local, setLocal] = useState({}); // pid → { status: 'loading' | 'error', code, message, key }
+  const inflight = useRef(new Set());
+  const valid = (p) => {
+    const e = pstats?.[p.id];
+    return p.riot && e && e.key === riotKey(p.riot) ? e : null;
+  };
+  const load = (p, force = false) => {
+    const key = riotKey(p.riot);
+    if (inflight.current.has(key)) return;
+    if (!force && local[p.id]?.status === 'error' && local[p.id].key === key) return;
+    inflight.current.add(key);
+    setLocal((m) => ({ ...m, [p.id]: { status: 'loading', key } }));
+    fetchPlayerStats(p.riot).then(
+      (data) => {
+        actions.storePlayerStats(p.id, { ...data, key });
+        setLocal((m) => ({ ...m, [p.id]: null }));
+      },
+      (err) => setLocal((m) => ({ ...m, [p.id]: { status: 'error', code: err.code || 'network', message: err.message, key } })),
+    ).finally(() => inflight.current.delete(key));
+  };
+  useEffect(() => {
+    if (!loaded) return;
+    for (const p of players) {
+      if (!p.riot) continue;
+      const e = valid(p);
+      if (!e || Date.now() - (e.ts || 0) > STATS_TTL) load(p);
+    }
+  }, [loaded, players, pstats]);
+  return {
+    statsOf: (p) => valid(p),
+    statusOf: (p) => {
+      if (!p.riot) return { status: 'none' };
+      const l = local[p.id];
+      if (l && l.key === riotKey(p.riot)) return l;
+      return valid(p) ? { status: 'ok' } : { status: 'loading' };
+    },
+    refresh: (p) => p.riot && load(p, true),
+  };
+}
 
 /** Charge (et garde en mémoire) les stats U.GG des champions demandés. */
 function useChampionStats(ids, cfg) {
@@ -139,11 +186,21 @@ export function App({ store, room }) {
     : null;
   const muKey = Object.entries(enemyByRole).map(([r, e]) => `${r}:${e.champ}:${e.stats.status}`).join(',');
 
+  // Stats des joueurs (Riot ID) et mode de calcul des compos.
+  const pstats = state.pstats || {};
+  const pstatsApi = usePlayerStats(players, pstats, actions, snap.loaded);
+  const [compMode, setCompModeRaw] = useState(() => lsGet('cc.compMode', 'tiers'));
+  const setCompMode = (m) => { setCompModeRaw(m); lsSet('cc.compMode', m); setSelectedKey(null); };
+  const statsMode = compMode === 'stats';
+  const withStats = active.filter((p) => pstatsApi.statsOf(p)).length;
+  const statsFn = statsMode ? pstatsApi.statsOf : null;
+  const pstatsKey = active.map((p) => { const e = pstatsApi.statsOf(p); return e ? `${p.id}:${e.ts}` : ''; }).join(',');
+
   const engineKey = JSON.stringify([
     active.map((p) => [p.id, p.name, p.color, p.pool || {}, p.forcedRole || null]),
-    [...unavailable].sort(), locks, weight, limit, muKey, matchupWeight, statsCfg,
+    [...unavailable].sort(), locks, weight, limit, muKey, matchupWeight, statsCfg, compMode, statsMode ? pstatsKey : '',
   ]);
-  const opts = useMemo(() => ({ unavailable, locks, weight, limit, matchup: muFn }), [engineKey]);
+  const opts = useMemo(() => ({ unavailable, locks, weight, limit, matchup: muFn, stats: statsFn }), [engineKey]);
   const result = useMemo(() => solve(active, opts), [engineKey]);
 
   // Comp affichée en grand (on garde la même répartition si elle existe encore).
@@ -163,8 +220,10 @@ export function App({ store, room }) {
   const autoPlayer = useCallback((id) => result.comps[0]?.slots.find((s) => s.champ === id)?.player || null, [result]);
 
   const saved = useMemo(() => Object.entries(state.saved || {})
-    .map(([id, item]) => ({ id, item, ev: evaluateSaved(item, active, { unavailable, enemyPicks, locks, weight, matchup: muFn }) }))
-    .sort((a, b) => (b.ev.ok - a.ev.ok) || b.ev.score - a.ev.score), [state.saved, engineKey]);
+    .map(([id, item]) => ({ id, item, ev: evaluateSaved(item, active, {
+      unavailable, enemyPicks, locks, weight, matchup: muFn, stats: item.mode === 'stats' ? pstatsApi.statsOf : null,
+    }) }))
+    .sort((a, b) => (b.ev.ok - a.ev.ok) || b.ev.score - a.ev.score), [state.saved, engineKey, pstatsKey]);
 
   // ── Présence & activité ─────────────────────────────────────────────────
   const onlineList = useMemo(() => {
@@ -329,8 +388,9 @@ export function App({ store, room }) {
           <${CompsView} result=${result} weight=${weight} selected=${selectedIndex}
             onSelect=${(i) => setSelectedKey(result.comps[i]?.key)} lockedChamps=${lockedChamps} actions=${actions}
             priority=${priority} saved=${saved} onGoPlayers=${() => setTab('team')} playersCount=${players.length}
-            enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw} />`
-        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds}
+            enemies=${enemies} players=${active} unavailable=${usedAll} muRaw=${muRaw}
+            mode=${compMode} onMode=${setCompMode} withStats=${withStats} />`
+        : html`<${PlayersView} players=${players} actions=${actions} meId=${meInfo.playerId} onlineIds=${onlineIds} pstats=${pstatsApi}
             unavailable=${unavailable} onAdd=${(playerId, role) => setPicker({ mode: 'pool', playerId, role })}
             onEdit=${(playerId, champId) => setEditing({ playerId, champId })} onAddPlayer=${() => setAddingPlayer(true)} />`}
     </main>
@@ -349,7 +409,7 @@ export function App({ store, room }) {
     ${needIdentity && html`<${IdentityModal} teamName=${teamName} players=${players} onlineIds=${onlineIds} current=${me}
       canClose=${!!me} onClose=${() => setShowIdentity(false)}
       onChoose=${(identity) => { setMe(identity); setShowIdentity(false); }}
-      onCreate=${(name) => { const p = actions.addPlayer(name, { self: true }); setMe({ name, playerId: p.id, color: p.color }); setShowIdentity(false); setTab('team'); }} />`}
+      onCreate=${(name) => { const p = actions.addPlayer(name, { self: true }); setMe({ name: p.name, playerId: p.id, color: p.color }); setShowIdentity(false); setTab('team'); }} />`}
     <${ToastHost} />
   </div>`;
 }
@@ -451,14 +511,14 @@ function AddPlayerModal({ open, onClose, onAdd }) {
     if (!t) return;
     onAdd(t);
     setName('');
-    toast({ text: `${t} ajouté à l’équipe`, type: 'ok' });
+    toast({ text: `${t.split('#')[0].trim()} ajouté à l’équipe`, type: 'ok' });
   };
   return html`<${Modal} open=${open} onClose=${onClose} title="Ajouter un joueur" subtitle="Ajoute autant de joueurs que tu veux (remplaçants compris)." size="sm">
     <form class="id-row" onSubmit=${submit}>
-      <input data-autofocus class="input" value=${name} maxlength="28" placeholder="Pseudo du joueur" onInput=${(e) => setName(e.currentTarget.value)} aria-label="Pseudo" />
+      <input data-autofocus class="input" value=${name} maxlength="28" placeholder="Pseudo ou Riot ID (Pseudo#TAG)" onInput=${(e) => setName(e.currentTarget.value)} aria-label="Pseudo" />
       <button type="submit" class="btn btn-gold" disabled=${!name.trim()}>Ajouter</button>
     </form>
-    <p class="muted small">Astuce : chaque pote peut aussi s’ajouter tout seul en ouvrant le lien d’invitation.</p>
+    <p class="muted small">Avec le Riot ID (ex. <b>Faker#KR1</b>), ses stats de la saison sont chargées automatiquement. Chaque pote peut aussi s’ajouter tout seul avec le lien d’invitation.</p>
   <//>`;
 }
 

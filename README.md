@@ -64,6 +64,10 @@ puis ouvre <http://localhost:8080>. (Ou l'extension *Live Server* de VS Code.)
 - **Ajouter un joueur** (remplaçants compris). L'interrupteur *Titulaire / Remplaçant* indique qui joue ce Clash : le moteur choisit les 5 meilleurs titulaires.
 - Le **+** de chaque ligne (Top, Jungle, Mid, ADC, Support) ajoute des champions à ce rôle. Le niveau ajouté se choisit en haut du sélecteur.
 - Clic sur un champion → niveau **par rôle** (ex. Sett top **S** et support **B**), ou retrait du pool.
+- **Riot ID** (`Pseudo#TAG` + région) : les stats classées de la saison s'affichent sur la carte du joueur (parties, winrate, KDA, CS/min, rôle principal) et un petit badge donne son winrate sur chaque champion de son pool.
+  **Importer ses champions** ajoute d'un coup ses champions les plus joués, au bon rôle, avec un niveau proposé d'après ses stats.
+  On peut aussi taper directement `Pseudo#TAG` dans « Ajouter un joueur ».
+  Source : DeepLoL (données publiques de leur site, pas une API officielle). Les stats sont enregistrées dans l'équipe et rechargées toutes les 6 h. Si un compte n'a « aucune partie », ouvre son profil DeepLoL (bouton lien), clique sur *Mettre à jour*, puis recharge.
 - **Rôle imposé** : force un joueur sur un poste (« Lucas sera jungle quoi qu'il arrive »).
 - La **couverture des rôles** montre d'un coup d'œil les trous (ex. personne au support).
 
@@ -82,6 +86,8 @@ puis ouvre <http://localhost:8080>. (Ou l'extension *Live Server* de VS Code.)
   Le panneau **Matchups adverses** classe les champions de vos pools par winrate contre lui, et le moteur en tient compte : +0,5 pt par % au-dessus de 50 % (−0,5 en dessous, max ±4, lissé quand il y a peu de parties). Le badge « vs » sur chaque carte donne le winrate du matchup.
   Source : statistiques publiques de U.GG (ranked solo/duo, patch en cours). Rang, région et importance se règlent dans ⚙ Réglages. Ce n'est pas une API officielle : si U.GG change son format, les winrates disparaissent mais le reste du site continue de marcher.
 - **Nos picks** : verrouille un champion qu'on vient de prendre (bouton cadenas sur la compo, ou case « Picks » de *Nous*). Le joueur peut rester en *Auto* ou être choisi.
+- **Selon nos niveaux / Meilleures compos selon nos stats** : le second bouton recalcule les compos avec les vraies stats des joueurs (expérience, winrate lissé et KDA sur chaque champion, à chaque rôle), y compris des champions joués en classé mais absents du pool (« Ses stats »). Chaque carte affiche alors les parties, le winrate et le KDA du joueur sur ce champion.
+- **Valider et garder cette compo** : garde la compo affichée dans *Compos enregistrées*, pour toute l'équipe (étiquette *Stats* si elle vient du mode stats).
 - **Compo recommandée** : la meilleure répartition joueur → poste → champion, avec sous chaque carte les **autres choix** du joueur à ce poste.
 - **Toutes les options** : les meilleures compos avec des répartitions de rôles différentes (clique pour afficher en grand).
 - **Priorités de pick** : ce qu'on perd si l'adversaire ban/prend tel champion → à pick en premier.
@@ -110,6 +116,7 @@ js/main.js            démarrage (équipe, données, rendu)
 js/data.js            champions (Data Dragon) + rôles/profils + recherche
 js/optimizer.js       moteur de compos (recherche exhaustive avec élagage)
 js/stats.js           winrates et matchups (U.GG)
+js/playerstats.js     stats des joueurs par Riot ID (DeepLoL)
 js/store.js           synchro Firebase / mode local
 js/actions.js         modifications + journal d'activité
 js/app.js             application (en-tête, onglets, modales)

@@ -2,6 +2,7 @@
 // écriture dans la base + ligne dans le journal d'activité (visible par tous).
 import { champ, ROLES, ROLE_LABEL, TIER_LETTER } from './data.js';
 import { uid } from './util.js';
+import { DEFAULT_PLATFORM, parseRiotId } from './playerstats.js';
 
 export const PLAYER_COLORS = [
   '#f5b942', '#3ddc97', '#4c9dff', '#ff6b9a', '#a78bfa',
@@ -35,13 +36,16 @@ export function makeActions(store, ctx) {
 
   const a = {
     // ── Équipe ────────────────────────────────────────────────────────────
+    /** `name` peut être un Riot ID (« Pseudo#TAG ») : le pseudo et le compte sont alors remplis. */
     addPlayer(name, { self = false } = {}) {
       const id = uid('p');
       const color = freeColor();
-      store.set(`players/${id}`, { name, color, order: Date.now(), active: true });
+      const riotId = parseRiotId(name);
+      if (riotId) name = riotId.name;
+      store.set(`players/${id}`, { name, color, order: Date.now(), active: true, ...(riotId ? { riot: { ...riotId, platform: DEFAULT_PLATFORM } } : {}) });
       if (self) store.log({ by: name, color, cid: store.deviceId, text: 'a rejoint l’équipe', kind: 'join' });
       else log(`a ajouté ${name} à l’équipe`);
-      return { id, color };
+      return { id, color, name };
     },
     renamePlayer(pid, name) {
       const old = pName(pid);
@@ -61,6 +65,15 @@ export function makeActions(store, ctx) {
       store.set(`players/${pid}/active`, active);
       log(active ? `a remis ${pName(pid)} titulaire` : `a mis ${pName(pid)} remplaçant`);
     },
+    /** Compte Riot du joueur ({ name, tag, platform } ou null) : ses stats seront chargées. */
+    setRiotId(pid, riot) {
+      store.update({ [`players/${pid}/riot`]: riot || null, [`pstats/${pid}`]: null });
+      log(riot ? `a lié ${pName(pid)} au compte ${riot.name}#${riot.tag}` : `a retiré le compte Riot de ${pName(pid)}`);
+    },
+    /** Stats téléchargées (pas de ligne dans le journal : c'est automatique). */
+    storePlayerStats(pid, data) {
+      store.set(`pstats/${pid}`, data);
+    },
     setForcedRole(pid, role) {
       store.set(`players/${pid}/forcedRole`, role || null);
       log(role ? `a imposé le rôle ${ROLE_LABEL[role]} à ${pName(pid)}` : `a retiré le rôle imposé de ${pName(pid)}`);
@@ -75,6 +88,14 @@ export function makeActions(store, ctx) {
       if (!tier) log(`a retiré ${cName(id)} (${ROLE_LABEL[role]}) de ${poolOf(pid)}`, 'edit', key);
       else if (!had) log(`a ajouté ${cName(id)} (${ROLE_LABEL[role]} · ${TIER_LETTER[tier]}) à ${poolOf(pid)}`, 'edit', key);
       else log(`a mis ${cName(id)} en ${ROLE_LABEL[role]} · ${TIER_LETTER[tier]} dans ${poolOf(pid)}`, 'edit', key);
+    },
+    /** Ajoute plusieurs champions d'un coup : [{ id, role, tier }]. */
+    importPool(pid, items) {
+      if (!items.length) return;
+      const updates = {};
+      for (const it of items) updates[`players/${pid}/pool/${it.id}/${it.role}`] = it.tier;
+      store.update(updates);
+      log(`a importé ${items.length} champion${items.length > 1 ? 's' : ''} depuis les stats dans ${poolOf(pid)}`);
     },
     removeChamp(pid, id) {
       store.set(`players/${pid}/pool/${id}`, null);
@@ -136,14 +157,15 @@ export function makeActions(store, ctx) {
     },
 
     // ── Compos enregistrées ───────────────────────────────────────────────
-    saveComp(comp) {
+    /** Garde une compo proposée (mode 'stats' = proposée d'après les stats des joueurs). */
+    saveComp(comp, mode = 'tiers') {
       const count = Object.keys(S().saved || {}).length;
       const id = uid('s');
       const slots = {};
       for (const s of comp.slots) slots[s.role] = { champ: s.champ, player: s.player.id, name: s.player.name };
-      const name = `Compo ${count + 1}`;
-      store.set(`saved/${id}`, { name, slots, by: me().name, ts: Date.now() });
-      log(`a enregistré « ${name} » (${ROLES.map((r) => cName(slots[r].champ)).join(', ')})`);
+      const name = `${mode === 'stats' ? 'Compo stats' : 'Compo'} ${count + 1}`;
+      store.set(`saved/${id}`, { name, slots, by: me().name, ts: Date.now(), mode });
+      log(`a validé et gardé « ${name} » (${ROLES.map((r) => cName(slots[r].champ)).join(', ')})`);
       return id;
     },
     renameSaved(id, name) {

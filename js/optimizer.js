@@ -3,6 +3,7 @@
 // joueur → rôle → champion, en respectant les bans, les picks adverses et nos
 // picks déjà verrouillés. Recherche exhaustive avec élagage (branch & bound).
 import { ROLES, ROLE_LABEL, champ } from './data.js';
+import { champStats, perfValue } from './playerstats.js';
 
 // Points de confort par niveau (S / A / B / C).
 export const TIER_VALUE = { 4: 10, 3: 8, 2: 6, 1: 3 };
@@ -51,6 +52,30 @@ function quickBalance(picks) {
 
 export const maxScore = (weight) => MAX_COMFORT + MAX_BALANCE * weight;
 
+// Mode « stats » : champion hors pool retenu seulement avec assez de parties à ce rôle.
+export const STATS_MIN_GAMES = 3;
+// Champion du pool sans aucune partie classée à ce rôle (alors que le joueur a des stats).
+const NO_GAMES_PENALTY = 1.5;
+
+/**
+ * Valeur d'un pick pour un joueur.
+ * - Mode niveaux : points du niveau (S 10 · A 8 · B 6 · C 3).
+ * - Mode stats (ps = stats du joueur) : moyenne niveau + performance réelle ; un champion hors
+ *   pool beaucoup joué compte avec sa seule performance.
+ * → { base, tier, perf (stats du champion à ce rôle), fromStats } ou null si le joueur ne le joue pas là.
+ */
+export function pickValue(tier, ps, id, role) {
+  const tv = TIER_VALUE[tier] || 0;
+  if (!ps) return tv ? { base: tv, tier, perf: null, fromStats: false } : null;
+  const st = champStats(ps, id, role);
+  if (st && st.games) {
+    if (!tv && st.games < STATS_MIN_GAMES) return null;
+    const pv = perfValue(st);
+    return { base: tv ? (tv + pv) / 2 : pv, tier: tier || 0, perf: st, fromStats: !tv };
+  }
+  return tv ? { base: Math.max(1, tv - NO_GAMES_PENALTY), tier, perf: null, fromStats: false } : null;
+}
+
 /** Score brut → note sur 100. */
 export function rating(score, weight) {
   return Math.max(0, Math.min(100, Math.round((score / maxScore(weight)) * 100)));
@@ -58,13 +83,14 @@ export function rating(score, weight) {
 
 /**
  * @param players  joueurs actifs : [{ id, name, color, pool: { champId: { role: tier } }, forcedRole }]
- * @param opts     { unavailable: Set<champId>, locks: [{ champ, player|null }], weight, limit, matchup }
+ * @param opts     { unavailable: Set<champId>, locks: [{ champ, player|null }], weight, limit, matchup, stats }
  *   matchup(champId, role) → { points, wr, wrS, games, vs } | null : bonus/malus contre le pick adverse du rôle
+ *   stats : mode « selon nos stats » → stats(player) = résumé DeepLoL du joueur (ou null)
  * @returns { players, cands, comps, reason, truncated }
  *   comps : meilleure compo pour chaque répartition des rôles, triées par score.
  */
 export function solve(players, opts = {}) {
-  const { unavailable = new Set(), locks = [], weight = 1, limit = 8, matchup = null } = opts;
+  const { unavailable = new Set(), locks = [], weight = 1, limit = 8, matchup = null, stats = null } = opts;
   const muCache = new Map();
   const mu = (id, role) => {
     if (!matchup) return null;
@@ -94,19 +120,23 @@ export function solve(players, opts = {}) {
     const forced = p.forcedRole || null;
     const mine = lockPlayer.get(pi);
     const pool = p.pool || {};
-    for (const id of Object.keys(pool)) {
+    const ps = stats ? stats(p) : null;
+    const ids = new Set(Object.keys(pool));
+    if (ps) for (const id of Object.keys(ps.champs || {})) ids.add(id);
+    for (const id of ids) {
       if (unavailable.has(id)) continue;
       if (mine && mine !== id) continue;
       const owner = lockChamp.get(id);
       if (owner !== undefined && owner >= 0 && owner !== pi) continue;
       const roles = pool[id] || {};
       const meta = champ(id);
+      if (!meta.key && !pool[id]) continue;
       ROLES.forEach((r, ri) => {
-        const tier = roles[r];
-        if (!TIER_VALUE[tier]) return;
         if (forced && forced !== r) return;
+        const v = pickValue(roles[r], ps, id, r);
+        if (!v) return;
         const m = mu(id, r);
-        cands[ri].push({ pi, champ: id, ri, tier, base: TIER_VALUE[tier], value: TIER_VALUE[tier] + (m?.points || 0), mu: m, meta, off: false });
+        cands[ri].push({ pi, champ: id, ri, tier: v.tier, base: v.base, value: v.base + (m?.points || 0), mu: m, meta, off: false, perf: v.perf, fromStats: v.fromStats });
       });
     }
   });
@@ -123,7 +153,7 @@ export function solve(players, opts = {}) {
         if (forced && forced !== r) continue;
         const ri = ROLES.indexOf(r);
         const m = mu(id, r);
-        cands[ri].push({ pi, champ: id, ri, tier: 0, base: OFFPOOL_VALUE, value: OFFPOOL_VALUE + (m?.points || 0), mu: m, meta, off: true });
+        cands[ri].push({ pi, champ: id, ri, tier: 0, base: OFFPOOL_VALUE, value: OFFPOOL_VALUE + (m?.points || 0), mu: m, meta, off: true, perf: null, fromStats: false });
       }
     }
   }
@@ -197,17 +227,18 @@ export function solve(players, opts = {}) {
 
   out.comps = top.map((t) => {
     const used = new Set(t.picks.map((p) => p.pi));
-    const comfort = t.picks.reduce((s, p) => s + p.base, 0);
+    const comfort = Math.round(t.picks.reduce((s, p) => s + p.base, 0) * 10) / 10;
     return {
       key: t.key,
       score: t.score,
       comfort,
-      matchup: t.comfort - comfort,
+      matchup: Math.round((t.comfort - t.picks.reduce((s, p) => s + p.base, 0)) * 10) / 10,
+      statsMode: !!stats,
       hasMatchups: t.picks.some((p) => p.mu),
       balance: balanceOf(t.picks.map((p) => p.meta)),
       slots: t.picks.map((p) => ({
         role: ROLES[p.ri], ri: p.ri, pi: p.pi, player: players[p.pi],
-        champ: p.champ, tier: p.tier, value: p.value, off: p.off, mu: p.mu,
+        champ: p.champ, tier: p.tier, value: p.value, off: p.off, mu: p.mu, perf: p.perf, fromStats: p.fromStats,
       })),
       bench: players.filter((_, i) => !used.has(i)),
     };
@@ -260,7 +291,7 @@ export function pickPriority(players, opts, result) {
  * Évalue une compo enregistrée avec les pools et la draft actuels.
  * `players` = joueurs titulaires (actifs).
  */
-export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, weight = 1, matchup = null }) {
+export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, weight = 1, matchup = null, stats = null }) {
   const reasons = [];
   const metas = [];
   let comfort = 0;
@@ -277,7 +308,8 @@ export function evaluateSaved(saved, players, { unavailable, enemyPicks, locks, 
     const p = players.find((x) => x.id === slot.player);
     if (!p) reasons.push(`${slot.name || 'Un joueur'} n’est pas titulaire`);
     const tier = p?.pool?.[slot.champ]?.[role];
-    comfort += (TIER_VALUE[tier] || OFFPOOL_VALUE) + (matchup?.(slot.champ, role)?.points || 0);
+    const v = pickValue(tier, p && stats ? stats(p) : null, slot.champ, role);
+    comfort += (v ? v.base : OFFPOOL_VALUE) + (matchup?.(slot.champ, role)?.points || 0);
   }
   for (const l of locks) {
     if (!champsIn.has(l.champ)) reasons.push(`Incompatible avec notre pick ${champ(l.champ).name}`);
